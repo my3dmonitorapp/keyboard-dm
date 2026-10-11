@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -17,6 +20,12 @@ from PySide6.QtWidgets import (
 )
 
 from .layout_model import Key, Layout, PROVISIONAL_75_LAYOUT
+from .profile import (
+    ProfileError,
+    create_profile,
+    load_profile as load_profile_file,
+    save_profile as save_profile_file,
+)
 
 
 class Keyboard75Window(QMainWindow):
@@ -27,9 +36,11 @@ class Keyboard75Window(QMainWindow):
         self.layout = layout or Layout.from_dict(PROVISIONAL_75_LAYOUT.to_dict())
         self.selected_key: Key | None = None
         self.key_widgets: dict[str, QPushButton] = {}
+        self.profile: dict[str, object] | None = None
 
         self.setWindowTitle("Keyboard75 — PROVISIONAL Layout")
         self.resize(1240, 520)
+        self._build_file_menu()
 
         central_widget = QWidget(self)
         root_layout = QVBoxLayout(central_widget)
@@ -46,6 +57,19 @@ class Keyboard75Window(QMainWindow):
         root_layout.addLayout(content_layout, stretch=1)
 
         self.setCentralWidget(central_widget)
+
+    def _build_file_menu(self) -> None:
+        file_menu = self.menuBar().addMenu("&File")
+
+        open_action = QAction("Open...", self)
+        open_action.setObjectName("openProfileAction")
+        open_action.triggered.connect(self._open_profile_dialog)
+        file_menu.addAction(open_action)
+
+        save_action = QAction("Save...", self)
+        save_action.setObjectName("saveProfileAction")
+        save_action.triggered.connect(self._save_profile_dialog)
+        file_menu.addAction(save_action)
 
     def _build_top_bar(self) -> QWidget:
         top_bar = QWidget(self)
@@ -118,6 +142,7 @@ class Keyboard75Window(QMainWindow):
         assignment_label = QLabel("Assignment", inspector)
         self.assignment_edit = QLineEdit(inspector)
         self.assignment_edit.setObjectName("assignmentEdit")
+        self.assignment_edit.setMaxLength(32)
         self.assignment_edit.setEnabled(False)
         self.assignment_edit.returnPressed.connect(self.apply_assignment)
 
@@ -168,7 +193,53 @@ class Keyboard75Window(QMainWindow):
             self._button_text(self.selected_key)
         )
 
+    def load_profile(self, path: str) -> None:
+        """Load *path* and update all assignments in the model and UI."""
+        profile = load_profile_file(path)
+        assignments = profile["keys"]
+        for key in self.layout.keys:
+            key.assignment = assignments[key.key_id]["assignment"]
+            self.key_widgets[key.key_id].setText(self._button_text(key))
+
+        self.profile = profile
+        if self.selected_key is not None:
+            self.assignment_edit.setText(self.selected_key.assignment)
+
+    def save_profile(self, path: str) -> None:
+        """Save all assignments currently held by the layout to *path*."""
+        assignments = {key.key_id: key.assignment for key in self.layout.keys}
+        if self.profile is None:
+            profile = create_profile(assignments)
+        else:
+            profile = dict(self.profile)
+            profile["keys"] = {
+                key_id: {"assignment": assignment}
+                for key_id, assignment in assignments.items()
+            }
+        self.profile = save_profile_file(path, profile)
+
+    def _open_profile_dialog(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self, "Open Keyboard75 profile", "", "JSON profiles (*.json)"
+        )
+        if not path:
+            return
+        try:
+            self.load_profile(path)
+        except (OSError, ProfileError) as error:
+            QMessageBox.critical(self, "Could not open profile", str(error))
+
+    def _save_profile_dialog(self) -> None:
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self, "Save Keyboard75 profile", "", "JSON profiles (*.json)"
+        )
+        if not path:
+            return
+        try:
+            self.save_profile(path)
+        except (OSError, ProfileError) as error:
+            QMessageBox.critical(self, "Could not save profile", str(error))
+
 
 # A concise alias is useful to callers embedding the window.
 MainWindow = Keyboard75Window
-

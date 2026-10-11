@@ -1,5 +1,13 @@
 # Documentation Changelog
 
+## 2026-10-11 — BD-1 Bluetooth-first standard-ESP32 planning baseline
+
+- Adopted [BD-1](hardware-decision-2026-10-11-bt-first.md): the primary target is now a standard ESP32 (preferably an ESP32-WROOM-32 DevKit-class or similar economical board; exact part **TBD**) with BLE HID as the primary keyboard transport.
+- Removed native USB HID as a requirement for the 75-key keyboard and retained USB serial through the board's USB-UART bridge or routed UART for programming, firmware updates, and configuration.
+- Preserved the board-independent S1.2 typed-action model and profile v2 format, and documented an extensible capability matrix with ESP32-C3, ESP32-S2, and ESP32-S3 deferred while the standard ESP32 is implemented first.
+- Preserved the mandatory pre-firmware verification gate for as-built matrix wiring, diode orientation, continuity, and confirmed GPIO mapping; no pins, board purchase, battery design, or RGB hardware are asserted.
+- Updated `docs/product-specification.md` to v1.1, `docs/hardware-requirements.md`, `docs/development-roadmap.md`, and this changelog. Planned commit: `BD-2: planning docs adopt Bluetooth-first standard ESP32 (spec v1.1, hardware reqs, roadmap retargeted, changelog)`.
+
 ## 2026-10-11 — Desktop application Milestone S1.2
 
 - T1: Added a typed, extensible action model for keyboard keys, sided modifier events, shortcuts, media controls, and losslessly retained legacy values.
@@ -33,3 +41,4 @@
 - This decision replaces and supersedes the previously planned standard ESP32 target.
 - Added the Phase 0 planning baseline: product specification v1.0, hardware requirements, and development roadmap.
 - Kept GPIO allocation, exact matrix wiring, diode orientation, RGB hardware, and battery circuitry explicitly **TBD** pending hardware confirmation.
+- Historical note: this baseline is superseded by BD-1 and product specification v1.1 above.

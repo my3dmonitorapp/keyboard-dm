@@ -9,10 +9,31 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from desktop_app.app import Keyboard75Window
+from desktop_app.action import ShortcutAction, SingleKeyAction
 from desktop_app.device import SimulatedESP32S3Device
 from desktop_app.layouts import BUILT_IN_LAYOUTS, L06, L12, L75, make_custom_layout
 from desktop_app.profile import save_profile
 from desktop_app.project import create_project, save_project
+
+
+def _choose(combo, value: str) -> None:
+    index = combo.findData(value)
+    assert index >= 0
+    combo.setCurrentIndex(index)
+
+
+def _set_single_key(window: Keyboard75Window, key: str) -> None:
+    _choose(window.action_type_combo, "key")
+    _choose(window.single_key_combo, key)
+
+
+def _set_shortcut(
+    window: Keyboard75Window, modifiers: tuple[str, ...], key: str
+) -> None:
+    _choose(window.action_type_combo, "shortcut")
+    for modifier in modifiers:
+        window.modifier_checkboxes[modifier].setChecked(True)
+    _choose(window.shortcut_key_combo, key)
 
 
 def test_window_constructs_with_75_key_widgets() -> None:
@@ -36,7 +57,7 @@ def test_assignment_marks_dirty_and_close_offers_discard(monkeypatch) -> None:
 
     monkeypatch.setattr(QMessageBox, "warning", discard)
     window.select_key(window.layout.keys[0])
-    window.assignment_edit.setText("A")
+    _set_single_key(window, "a")
     window.apply_assignment()
 
     assert window.dirty is True
@@ -70,7 +91,7 @@ def test_save_adds_json_suffix_clears_dirty_and_reports_path(tmp_path) -> None:
     application = QApplication.instance() or QApplication([])
     window = Keyboard75Window()
     window.select_key(window.layout.keys[0])
-    window.assignment_edit.setText("A")
+    _set_single_key(window, "a")
     window.apply_assignment()
 
     saved_path = window.save_profile(tmp_path / "local-profile")
@@ -161,7 +182,7 @@ def test_wrong_key_set_error_preserves_current_profile_and_assignments(
     assert "additional key IDs: K07, K08, K09" in errors[0][1]
     assert window.current_profile_path == valid_path
     assert {key.key_id: key.assignment for key in window.layout.keys} == before
-    assert window.layout.keys[2].assignment == "Ctrl+X"
+    assert window.layout.keys[2].assignment == ShortcutAction(("lctrl",), "x").to_json()
 
     window._set_dirty(False)
     window.close()
@@ -189,7 +210,7 @@ def test_layout_menu_selection_save_and_reopen_has_stable_widgets(
 
     last_id = expected_ids[-1]
     window.key_widgets[last_id].click()
-    window.assignment_edit.setText(f"{layout.name}-saved")
+    _set_single_key(window, "a")
     window.apply_button.click()
     path = window.save_profile(tmp_path / f"{layout.name.lower()}-gui.json")
     window.close()
@@ -200,7 +221,7 @@ def test_layout_menu_selection_save_and_reopen_has_stable_widgets(
     assert list(reopened.key_widgets) == expected_ids
     assert len(reopened.key_widgets) == layout.key_count
     assert reopened.layout.keys[-1].key_id == last_id
-    assert reopened.layout.keys[-1].assignment == f"{layout.name}-saved"
+    assert reopened.layout.keys[-1].assignment == SingleKeyAction("a").to_json()
 
     reopened._set_dirty(False)
     reopened.close()
@@ -222,7 +243,7 @@ def test_layout_switch_preserves_shared_assignments_and_defaults_new_keys(
     )
     window.connect_device()
     window.select_key(window.layout.keys[2])
-    window.assignment_edit.setText("Ctrl+X")
+    _set_shortcut(window, ("lctrl",), "x")
     window.apply_assignment()
 
     assert window.switch_layout(L12) is True
@@ -230,8 +251,8 @@ def test_layout_switch_preserves_shared_assignments_and_defaults_new_keys(
     assignments = {key.key_id: key.assignment for key in window.layout.keys}
     assert len(warnings) == 1
     assert len(window.key_widgets) == 12
-    assert assignments["K03"] == "Ctrl+X"
-    assert assignments["K07"] == "NONE"
+    assert assignments["K03"] == ShortcutAction(("lctrl",), "x").to_json()
+    assert assignments["K07"] is None
     assert window.dirty is True
     assert len(window.device.get_key_states()) == 12
     assert window.device.get_key_states()["K03"] == "Ctrl+X"
@@ -298,18 +319,18 @@ def test_switching_projects_preserves_independent_assignments_and_device_state(
 
     assert window.load_project(first_path)
     assert window.layout.key_count == 6
-    assert window.layout.keys[0].assignment == "A"
+    assert window.layout.keys[0].assignment == SingleKeyAction("a").to_json()
     assert window.device.get_key_states()["K01"] == "A"
     assert "L06 (6 keys)" in window.simulated_device_status_label.text()
 
     assert window.load_project(second_path)
     assert window.layout.key_count == 12
-    assert window.layout.keys[0].assignment == "B"
+    assert window.layout.keys[0].assignment == SingleKeyAction("b").to_json()
     assert window.device.get_key_states()["K01"] == "B"
     assert "L12 (12 keys)" in window.simulated_device_status_label.text()
 
     assert window.load_project(first_path)
-    assert window.layout.keys[0].assignment == "A"
+    assert window.layout.keys[0].assignment == SingleKeyAction("a").to_json()
     assert len(window.key_widgets) == 6
 
     window.disconnect_device()

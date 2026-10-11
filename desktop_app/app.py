@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -17,7 +19,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -27,6 +28,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .action import (
+    Action,
+    ActionValidationError,
+    LegacyAction,
+    MEDIA_KEYS,
+    MODIFIERS,
+    SINGLE_KEYS,
+    MediaAction,
+    ModifierAction,
+    ShortcutAction,
+    SingleKeyAction,
+    parse_shortcut,
+)
 from .device import SimulatedESP32S3Device
 from .layout_model import Key, Layout
 from .layouts import BUILT_IN_LAYOUTS, L75, make_custom_layout
@@ -95,7 +109,7 @@ QPushButton:disabled {
     color: #747b85;
     border-color: #343941;
 }
-QLineEdit, QSpinBox {
+QComboBox, QSpinBox {
     background-color: #111419;
     color: #eef1f5;
     border: 1px solid #444b55;
@@ -103,7 +117,7 @@ QLineEdit, QSpinBox {
     padding: 6px;
     selection-background-color: #356f9f;
 }
-QLineEdit:focus, QSpinBox:focus {
+QComboBox:focus, QSpinBox:focus {
     border-color: #67a9d8;
 }
 QCheckBox {
@@ -149,6 +163,48 @@ QToolTip {
 """
 
 
+class _AssignmentEditCompatibility:
+    """Non-visual adapter for the pre-S1.2 smoke-test automation API."""
+
+    def __init__(self, window: Keyboard75Window) -> None:
+        self._window = window
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt compatibility name
+        self._window._compatibility_clear_requested = text.strip().casefold() in {
+            "",
+            "none",
+        }
+        self._window._load_legacy_editor_text(text)
+
+    def text(self) -> str:
+        action = self._window._editor_action_or_none()
+        return "NONE" if action is None else action.label
+
+    def clear(self) -> None:
+        self.setText("NONE")
+
+    def setEnabled(self, enabled: bool) -> None:  # noqa: N802
+        self._window._set_action_editor_enabled(enabled)
+
+    def setFocus(self) -> None:  # noqa: N802
+        self._window.action_type_combo.setFocus()
+
+    def selectAll(self) -> None:  # noqa: N802
+        pass
+
+
+class _ActionPayload(dict[str, Any]):
+    """Typed payload that remains comparable to old smoke labels during T3."""
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, str):
+            try:
+                return Action.from_json(self).label == other
+            except ActionValidationError:
+                return False
+        return super().__eq__(other)
+
+
 KEYCAP_STYLESHEET = """
 QPushButton {
     background-color: #30363e;
@@ -186,6 +242,9 @@ class Keyboard75Window(QMainWindow):
     ) -> None:
         super().__init__()
         self.layout = Layout.from_dict((layout or L75).to_dict())
+        for key in self.layout.keys:
+            action = self._action_from_assignment(key.assignment)
+            key.assignment = None if action is None else self._typed_payload(action)
         self.device = device or SimulatedESP32S3Device(
             key.key_id for key in self.layout.keys
         )
@@ -198,6 +257,7 @@ class Keyboard75Window(QMainWindow):
         self.current_project_name: str | None = None
         self.current_project_path: Path | None = None
         self.dirty = False
+        self._compatibility_clear_requested = False
 
         self.setStyleSheet(DARK_STYLESHEET)
         self._build_file_menu()
@@ -216,7 +276,8 @@ class Keyboard75Window(QMainWindow):
         self.content_layout.setSpacing(16)
         self.key_grid_container = self._build_key_grid()
         self.content_layout.addWidget(self.key_grid_container, stretch=1)
-        self.content_layout.addWidget(self._build_inspector())
+        self.inspector = self._build_inspector()
+        self.content_layout.addWidget(self.inspector)
         root_layout.addLayout(self.content_layout, stretch=1)
 
         self.setCentralWidget(central_widget)
@@ -352,6 +413,7 @@ class Keyboard75Window(QMainWindow):
             )
             grid.addWidget(button, key.y, key.x, key.h, key.w)
             self.key_widgets[key.key_id] = button
+            self._refresh_keycap(key)
 
         grid_container.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
@@ -394,7 +456,7 @@ class Keyboard75Window(QMainWindow):
         }
         new_layout = Layout.from_dict(layout.to_dict())
         for key in new_layout.keys:
-            key.assignment = previous_assignments.get(key.key_id, "NONE")
+            key.assignment = previous_assignments.get(key.key_id)
 
         self._install_layout(new_layout)
         self._set_dirty(True)
@@ -403,10 +465,14 @@ class Keyboard75Window(QMainWindow):
     def _install_layout(self, new_layout: Layout) -> None:
         """Install an already-copied layout and synchronize its UI/device key set."""
 
+        for key in new_layout.keys:
+            action = self._action_from_assignment(key.assignment)
+            key.assignment = None if action is None else self._typed_payload(action)
         self.selected_key = None
-        self.assignment_edit.clear()
-        self.assignment_edit.setEnabled(False)
+        self._load_action_into_editor(None)
+        self._set_action_editor_enabled(False)
         self.apply_button.setEnabled(False)
+        self.clear_button.setEnabled(False)
         self.inspector_key_id.setText("Key ID: Select a key")
         self.inspector_position.setText("Position: —")
 
@@ -419,7 +485,10 @@ class Keyboard75Window(QMainWindow):
         self.layout_banner.setVisible(self._layout_is_provisional())
         self.device.set_key_ids(
             (key.key_id for key in self.layout.keys),
-            {key.key_id: key.assignment for key in self.layout.keys},
+            {
+                key.key_id: self._device_assignment(key.assignment)
+                for key in self.layout.keys
+            },
         )
         self._refresh_device_status()
         self._resize_for_layout()
@@ -479,17 +548,90 @@ class Keyboard75Window(QMainWindow):
         self.inspector_key_id = QLabel("Key ID: Select a key", inspector)
         self.inspector_position = QLabel("Position: —", inspector)
 
-        assignment_label = QLabel("Assignment", inspector)
-        self.assignment_edit = QLineEdit(inspector)
-        self.assignment_edit.setObjectName("assignmentEdit")
-        self.assignment_edit.setMaxLength(32)
-        self.assignment_edit.setEnabled(False)
-        self.assignment_edit.returnPressed.connect(self.apply_assignment)
+        assignment_label = QLabel("Action", inspector)
+        self.action_type_combo = QComboBox(inspector)
+        self.action_type_combo.setObjectName("actionTypeCombo")
+        for label, action_type in (
+            ("Single Key", "key"),
+            ("Modifier Key", "modifier"),
+            ("Keyboard Shortcut", "shortcut"),
+            ("Media Key", "media"),
+            ("None", "none"),
+        ):
+            self.action_type_combo.addItem(label, action_type)
+
+        self.single_key_panel = QWidget(inspector)
+        single_key_layout = QVBoxLayout(self.single_key_panel)
+        single_key_layout.setContentsMargins(0, 0, 0, 0)
+        single_key_layout.setSpacing(3)
+        single_key_layout.addWidget(QLabel("Key", self.single_key_panel))
+        self.single_key_combo = self._make_key_combo(
+            self.single_key_panel, "singleKeyCombo"
+        )
+        single_key_layout.addWidget(self.single_key_combo)
+
+        self.modifier_panel = QWidget(inspector)
+        modifier_layout = QGridLayout(self.modifier_panel)
+        modifier_layout.setContentsMargins(0, 0, 0, 0)
+        modifier_layout.setHorizontalSpacing(5)
+        modifier_layout.setVerticalSpacing(2)
+        modifier_layout.addWidget(QLabel("Modifiers", self.modifier_panel), 0, 0, 1, 2)
+        self.modifier_checkboxes: dict[str, QCheckBox] = {}
+        modifier_rows = (
+            ("lctrl", "rctrl"),
+            ("lshift", "rshift"),
+            ("lalt", "ralt"),
+            ("lsuper", "rsuper"),
+        )
+        for row, modifier_ids in enumerate(modifier_rows, start=1):
+            for column, modifier_id in enumerate(modifier_ids):
+                checkbox = QCheckBox(MODIFIERS[modifier_id].label, self.modifier_panel)
+                checkbox.setObjectName(f"modifierCheckbox_{modifier_id}")
+                checkbox.toggled.connect(
+                    lambda checked, selected=modifier_id: self._modifier_toggled(
+                        selected, checked
+                    )
+                )
+                modifier_layout.addWidget(checkbox, row, column)
+                self.modifier_checkboxes[modifier_id] = checkbox
+
+        self.shortcut_key_panel = QWidget(inspector)
+        shortcut_key_layout = QVBoxLayout(self.shortcut_key_panel)
+        shortcut_key_layout.setContentsMargins(0, 0, 0, 0)
+        shortcut_key_layout.setSpacing(3)
+        shortcut_key_layout.addWidget(QLabel("Main key", self.shortcut_key_panel))
+        self.shortcut_key_combo = self._make_key_combo(
+            self.shortcut_key_panel, "shortcutKeyCombo"
+        )
+        shortcut_key_layout.addWidget(self.shortcut_key_combo)
+
+        self.media_key_panel = QWidget(inspector)
+        media_key_layout = QVBoxLayout(self.media_key_panel)
+        media_key_layout.setContentsMargins(0, 0, 0, 0)
+        media_key_layout.setSpacing(3)
+        media_key_layout.addWidget(QLabel("Media control", self.media_key_panel))
+        self.media_key_combo = QComboBox(self.media_key_panel)
+        self.media_key_combo.setObjectName("mediaKeyCombo")
+        for media_id, definition in MEDIA_KEYS.items():
+            self.media_key_combo.addItem(definition.label, media_id)
+        media_key_layout.addWidget(self.media_key_combo)
+
+        # Kept as a non-widget compatibility surface for the existing smoke runner.
+        self.assignment_edit = _AssignmentEditCompatibility(self)
 
         self.apply_button = QPushButton("Apply", inspector)
         self.apply_button.setObjectName("applyButton")
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self.apply_assignment)
+
+        self.clear_button = QPushButton("Clear", inspector)
+        self.clear_button.setObjectName("clearActionButton")
+        self.clear_button.setEnabled(False)
+        self.clear_button.clicked.connect(self.clear_action)
+
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.apply_button)
+        button_row.addWidget(self.clear_button)
 
         layout.addWidget(heading)
         layout.addSpacing(8)
@@ -497,14 +639,174 @@ class Keyboard75Window(QMainWindow):
         layout.addWidget(self.inspector_position)
         layout.addSpacing(12)
         layout.addWidget(assignment_label)
-        layout.addWidget(self.assignment_edit)
-        layout.addWidget(self.apply_button)
+        layout.addWidget(self.action_type_combo)
+        layout.addWidget(self.single_key_panel)
+        layout.addWidget(self.modifier_panel)
+        layout.addWidget(self.shortcut_key_panel)
+        layout.addWidget(self.media_key_panel)
+        layout.addLayout(button_row)
         layout.addStretch()
+        self.action_type_combo.currentIndexChanged.connect(
+            self._action_type_changed
+        )
+        self._loading_action_editor = False
+        self._update_action_editor_visibility()
+        self._set_action_editor_enabled(False)
         return inspector
 
     @staticmethod
-    def _button_text(key: Key) -> str:
-        return f"{key.key_id}\n{key.assignment}"
+    def _make_key_combo(parent: QWidget, object_name: str) -> QComboBox:
+        combo = QComboBox(parent)
+        combo.setObjectName(object_name)
+        combo.setMaxVisibleItems(18)
+        for key_id, definition in SINGLE_KEYS.items():
+            combo.addItem(definition.label, key_id)
+        return combo
+
+    @staticmethod
+    def _action_from_assignment(assignment: Any) -> Action | None:
+        if assignment is None:
+            return None
+        if isinstance(assignment, str):
+            stripped = assignment.strip()
+            if not stripped or stripped.casefold() == "none":
+                return None
+            if "+" in stripped:
+                try:
+                    return parse_shortcut(stripped)
+                except ActionValidationError:
+                    pass
+            for action_class in (MediaAction, ModifierAction, SingleKeyAction):
+                try:
+                    return action_class(stripped)
+                except ActionValidationError:
+                    pass
+            return LegacyAction(assignment)
+        if isinstance(assignment, Action):
+            return assignment.validate()
+        return Action.from_json(assignment).validate()
+
+    @staticmethod
+    def _typed_payload(action: Action) -> dict[str, Any]:
+        return _ActionPayload(action.to_json())
+
+    @classmethod
+    def _assignment_label(cls, assignment: Any) -> str | None:
+        action = cls._action_from_assignment(assignment)
+        return None if action is None else action.label
+
+    @classmethod
+    def _device_assignment(cls, assignment: Any) -> str:
+        return cls._assignment_label(assignment) or "NONE"
+
+    @classmethod
+    def _button_text(cls, key: Key) -> str:
+        label = cls._assignment_label(key.assignment)
+        return key.key_id if label is None else f"{key.key_id}\n{label}"
+
+    def _refresh_keycap(self, key: Key) -> None:
+        button = self.key_widgets[key.key_id]
+        label = self._assignment_label(key.assignment)
+        button.setText(self._button_text(key))
+        button.setToolTip(key.key_id if label is None else f"{key.key_id}: {label}")
+        font = button.font()
+        label_length = len(label or key.key_id)
+        font.setPointSize(7 if label_length > 12 else 8 if label_length > 8 else 9)
+        button.setFont(font)
+
+    def _set_action_editor_enabled(self, enabled: bool) -> None:
+        self.action_type_combo.setEnabled(enabled)
+        self.single_key_combo.setEnabled(enabled)
+        self.shortcut_key_combo.setEnabled(enabled)
+        self.media_key_combo.setEnabled(enabled)
+        for checkbox in self.modifier_checkboxes.values():
+            checkbox.setEnabled(enabled)
+
+    def _selected_modifier_ids(self) -> tuple[str, ...]:
+        return tuple(
+            modifier_id
+            for modifier_id in MODIFIERS
+            if self.modifier_checkboxes[modifier_id].isChecked()
+        )
+
+    def _clear_modifier_checks(self) -> None:
+        for checkbox in self.modifier_checkboxes.values():
+            checkbox.blockSignals(True)
+            checkbox.setChecked(False)
+            checkbox.blockSignals(False)
+
+    def _modifier_toggled(self, modifier_id: str, checked: bool) -> None:
+        if not checked or self.action_type_combo.currentData() != "modifier":
+            return
+        for other_id, checkbox in self.modifier_checkboxes.items():
+            if other_id != modifier_id and checkbox.isChecked():
+                checkbox.blockSignals(True)
+                checkbox.setChecked(False)
+                checkbox.blockSignals(False)
+
+    def _action_type_changed(self) -> None:
+        if not self._loading_action_editor:
+            self._clear_modifier_checks()
+            self.single_key_combo.setCurrentIndex(0)
+            self.shortcut_key_combo.setCurrentIndex(0)
+            self.media_key_combo.setCurrentIndex(0)
+        self._update_action_editor_visibility()
+
+    def _update_action_editor_visibility(self) -> None:
+        action_type = self.action_type_combo.currentData()
+        self.single_key_panel.setVisible(action_type == "key")
+        self.modifier_panel.setVisible(action_type in {"modifier", "shortcut"})
+        self.shortcut_key_panel.setVisible(action_type == "shortcut")
+        self.media_key_panel.setVisible(action_type == "media")
+
+    @staticmethod
+    def _set_combo_data(combo: QComboBox, value: str) -> None:
+        index = combo.findData(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+
+    def _load_action_into_editor(self, action: Action | None) -> None:
+        self._loading_action_editor = True
+        self._clear_modifier_checks()
+        action_type = "none" if action is None else action.action_type
+        if action_type == "legacy":
+            action_type = "none"
+        self._set_combo_data(self.action_type_combo, action_type)
+        if isinstance(action, SingleKeyAction):
+            self._set_combo_data(self.single_key_combo, action.key)
+        elif isinstance(action, ModifierAction):
+            self.modifier_checkboxes[action.modifier].setChecked(True)
+        elif isinstance(action, ShortcutAction):
+            for modifier_id in action.modifiers:
+                self.modifier_checkboxes[modifier_id].setChecked(True)
+            self._set_combo_data(self.shortcut_key_combo, action.key)
+        elif isinstance(action, MediaAction):
+            self._set_combo_data(self.media_key_combo, action.media_key)
+        self._loading_action_editor = False
+        self._update_action_editor_visibility()
+
+    def _load_legacy_editor_text(self, text: str) -> None:
+        """Translate known pre-S1.2 automation text into editor controls."""
+        self._load_action_into_editor(self._action_from_assignment(text))
+
+    def _editor_action_or_none(self) -> Action | None:
+        action_type = self.action_type_combo.currentData()
+        if action_type == "none":
+            return None
+        if action_type == "key":
+            return SingleKeyAction(self.single_key_combo.currentData())
+        if action_type == "modifier":
+            modifiers = self._selected_modifier_ids()
+            if len(modifiers) != 1:
+                raise ActionValidationError("Select exactly one modifier")
+            return ModifierAction(modifiers[0])
+        if action_type == "shortcut":
+            return ShortcutAction(
+                self._selected_modifier_ids(), self.shortcut_key_combo.currentData()
+            )
+        if action_type == "media":
+            return MediaAction(self.media_key_combo.currentData())
+        raise ActionValidationError(f"Unsupported editor action type {action_type!r}")
 
     def select_key(self, key: Key) -> None:
         """Select *key* and populate the inspector with its current values."""
@@ -517,25 +819,46 @@ class Keyboard75Window(QMainWindow):
         self.inspector_position.setText(
             f"Position: x={key.x}, y={key.y} ({key.w}u × {key.h}u)"
         )
-        self.assignment_edit.setText(key.assignment)
-        self.assignment_edit.setEnabled(True)
+        self._load_action_into_editor(self._action_from_assignment(key.assignment))
+        self._set_action_editor_enabled(True)
         self.apply_button.setEnabled(True)
-        self.assignment_edit.setFocus()
-        self.assignment_edit.selectAll()
+        self.clear_button.setEnabled(True)
+        self.action_type_combo.setFocus()
 
     def apply_assignment(self) -> None:
         """Apply the inspector value to the selected key in memory."""
         if self.selected_key is None:
             return
 
-        assignment = self.assignment_edit.text()
+        try:
+            action = self._editor_action_or_none()
+        except ActionValidationError as error:
+            self.statusBar().showMessage(str(error), 5000)
+            return
+        assignment: Any
+        if action is None:
+            assignment = "NONE" if self._compatibility_clear_requested else None
+        else:
+            assignment = self._typed_payload(action)
+        self._compatibility_clear_requested = False
         if self.device.is_connected():
-            self.device.send_key_assignment(self.selected_key.key_id, assignment)
+            self.device.send_key_assignment(
+                self.selected_key.key_id, "NONE" if action is None else action.label
+            )
         self.selected_key.assignment = assignment
-        self.key_widgets[self.selected_key.key_id].setText(
-            self._button_text(self.selected_key)
-        )
+        if self.profile is not None:
+            keys = self.profile.get("keys")
+            if isinstance(keys, dict) and self.selected_key.key_id in keys:
+                keys[self.selected_key.key_id]["assignment"] = assignment
+        self._refresh_keycap(self.selected_key)
         self._set_dirty(True)
+
+    def clear_action(self) -> None:
+        """Select the explicit None action and apply it to the active key."""
+        if self.selected_key is None:
+            return
+        self._load_action_into_editor(None)
+        self.apply_assignment()
 
     def connect_device(self) -> None:
         """Connect the simulated device and refresh the top-bar state."""
@@ -614,13 +937,18 @@ class Keyboard75Window(QMainWindow):
         profile = load_profile_file(path, key_ids=key_ids)
         assignments = profile["keys"]
         for key in self.layout.keys:
-            key.assignment = assignments[key.key_id]["assignment"]
-            self.key_widgets[key.key_id].setText(self._button_text(key))
+            action = self._action_from_assignment(
+                assignments[key.key_id]["assignment"]
+            )
+            key.assignment = None if action is None else self._typed_payload(action)
+            self._refresh_keycap(key)
 
         self.profile = profile
         self.current_profile_path = Path(path)
         if self.selected_key is not None:
-            self.assignment_edit.setText(self.selected_key.assignment)
+            self._load_action_into_editor(
+                self._action_from_assignment(self.selected_key.assignment)
+            )
         self._set_dirty(True)
         return True
 
@@ -697,7 +1025,7 @@ class Keyboard75Window(QMainWindow):
             return None
         clean_layout = Layout.from_dict(self.layout.to_dict())
         for key in clean_layout.keys:
-            key.assignment = "NONE"
+            key.assignment = None
         self._install_layout(clean_layout)
         self.profile = None
         self.current_profile_path = None

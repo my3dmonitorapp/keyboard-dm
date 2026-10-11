@@ -33,7 +33,11 @@ def test_project_create_save_load_round_trip(tmp_path) -> None:
     assert loaded.name == "Six Pad"
     assert loaded.layout.name == "L06"
     assert loaded.layout.key_count == 6
-    assert loaded.assignments["K03"] == "Ctrl+X"
+    assert loaded.assignments["K03"] == {
+        "type": "shortcut",
+        "modifiers": ["lctrl"],
+        "key": "x",
+    }
     assert loaded.profile_path == "profiles/source.json"
     assert list_project_files(tmp_path) == [path]
 

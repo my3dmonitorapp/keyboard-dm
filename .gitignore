@@ -1,4 +1,5 @@
-/reference/vendor-12key/
+/reference/
+/reference-file-list.txt
 .codex-home/
 .venv/
 __pycache__/

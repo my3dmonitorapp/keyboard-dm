@@ -6,14 +6,40 @@ Target MCU: ESP32-S3 only
 ## 1. Roadmap rules
 
 - The ESP32-S3 is the sole target MCU and supersedes the earlier standard-ESP32 plan.
-- This roadmap separates planning, hardware confirmation, implementation, integration, and release verification.
+- Work proceeds in two parallel tracks: Track A for the desktop application and Track B for ESP32-S3 firmware.
+- The tracks share product decisions, but Track A can use the deterministic simulated device while Track B remains hardware-gated.
 - No firmware work may begin until the pre-firmware verification gate in Phase 2 passes.
 - GPIO allocation, exact matrix wiring, diode orientation, RGB hardware, and battery circuitry remain **TBD** until confirmed by evidence.
 - A phase may begin only when its listed entry gate is satisfied; schedule dates beyond Phase 0 are intentionally **TBD**.
 
-## 2. Phase plan
+## 2. Parallel tracks
 
-### Phase 0 — Product and architecture planning
+### Track A — Desktop application
+
+Status: **S1 complete (2026-10-11)**
+
+Track A runs independently against a simulated ESP32-S3 device until verified hardware is available. The provisional layout remains clearly labeled and does not define final key placement or firmware wiring.
+
+Milestone S1 delivered:
+
+- A Python and PySide6 desktop application launched with `python -m desktop_app`.
+- A visibly **PROVISIONAL** 5 × 15 editor using stable IDs K01–K75 and default `NONE` assignments.
+- Selection and editing for every key through the graphical inspector.
+- Version 1 JSON profile creation, validation, save, and load for all 75 assignments.
+- A deterministic simulated ESP32-S3 device with connect/disconnect behavior, BLE default transport, and automatic USB preference when a host is connected.
+- GUI integration for device state, transport state, and sending assignments to the simulator.
+- A real offscreen smoke entrypoint (`python -m desktop_app --smoke`) covering the window, K07 assignment, profile round-trip, USB preference, and simulated device state.
+- Automated tests for the layout model, GUI construction, profiles, simulated device, and end-to-end smoke flow.
+
+Future Track A milestones remain **TBD** and must not assume unresolved physical layout, wiring, or GPIO decisions.
+
+### Track B — ESP32-S3 firmware
+
+Status: **BLOCKED until the Phase 2 hardware verification gate passes**
+
+Track B must not begin firmware, framework-specific configuration, or executable firmware prototypes until matrix continuity, diode orientation, and GPIO allocation have been verified and the complete Phase 2 gate below passes.
+
+#### Phase 0 — Product and architecture planning
 
 Status: **Complete with the 2026-10-11 documentation baseline**
 
@@ -34,7 +60,7 @@ Deliverables:
 
 Exit condition: the four planning documents exist, agree on the ESP32-S3 decision, contain no pinmap or GPIO assumptions, and identify unresolved hardware items as **TBD**.
 
-### Phase 1 — Physical hardware discovery and decisions
+#### Phase 1 — Physical hardware discovery and decisions
 
 Status: **GATED / not started**
 
@@ -62,7 +88,7 @@ Exit evidence:
 - Reviewed power/TDP, memory, and I/O budgets.
 - Reviewed GPIO allocation with no conflicts.
 
-### Phase 2 — Pre-firmware verification gate
+#### Phase 2 — Pre-firmware verification gate
 
 Status: **GATED / not started**
 
@@ -83,7 +109,7 @@ The gate passes only when all of the following are true:
 
 If any item fails, work returns to Phase 1. Passing this gate authorizes planning for implementation; it does not change the ESP32-S3-only scope.
 
-### Phase 3 — Core input implementation
+#### Phase 3 — Core input implementation
 
 Status: **GATED behind Phase 2**
 
@@ -96,7 +122,7 @@ Planned outcomes:
 
 Exit criteria: all approved core-input and persistence tests pass on representative confirmed hardware.
 
-### Phase 4 — USB and BLE transport integration
+#### Phase 4 — USB and BLE transport integration
 
 Status: **GATED behind Phases 2 and 3**
 
@@ -109,7 +135,7 @@ Planned outcomes:
 
 Exit criteria: USB, BLE, and transport-transition tests pass across the approved host compatibility set.
 
-### Phase 5 — RGB and power integration
+#### Phase 5 — RGB and power integration
 
 Status: **GATED behind confirmed RGB hardware and Phase 4**
 
@@ -122,7 +148,7 @@ Planned outcomes:
 
 Exit criteria: functional, electrical, power, thermal, and interference tests pass for all included power modes.
 
-### Phase 6 — System verification and release readiness
+#### Phase 6 — System verification and release readiness
 
 Status: **GATED behind prior applicable phases**
 

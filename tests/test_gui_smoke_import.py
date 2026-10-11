@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from desktop_app.app import Keyboard75Window
 from desktop_app.device import SimulatedESP32S3Device
-from desktop_app.layouts import L06, L12
+from desktop_app.layouts import L06, L12, L75, make_custom_layout
 from desktop_app.profile import save_profile
 
 
@@ -142,4 +142,26 @@ def test_initial_layout_sets_injected_device_key_set() -> None:
 
     window.disconnect_device()
     window.close()
+    application.processEvents()
+
+
+def test_layout_geometry_and_provisional_strip_follow_active_layout() -> None:
+    application = QApplication.instance() or QApplication([])
+    small_window = Keyboard75Window(layout=L06)
+    large_window = Keyboard75Window(layout=L75)
+    custom_window = Keyboard75Window(layout=make_custom_layout(6, cols=3))
+
+    small_window.show()
+    large_window.show()
+    custom_window.show()
+    application.processEvents()
+
+    assert small_window.size() != large_window.size()
+    assert small_window.width() < large_window.width()
+    assert large_window.layout_banner.isVisible()
+    assert not custom_window.layout_banner.isVisible()
+
+    small_window.close()
+    large_window.close()
+    custom_window.close()
     application.processEvents()

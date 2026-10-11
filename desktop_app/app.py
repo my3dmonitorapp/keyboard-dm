@@ -37,6 +37,135 @@ from .profile import (
 )
 
 
+DARK_STYLESHEET = """
+QMainWindow, QWidget {
+    background-color: #181b20;
+    color: #e4e8ee;
+}
+QMenuBar {
+    background-color: #14171b;
+    color: #dce1e8;
+    border-bottom: 1px solid #30353d;
+}
+QMenuBar::item {
+    background: transparent;
+    padding: 5px 10px;
+}
+QMenuBar::item:selected, QMenuBar::item:pressed {
+    background-color: #2a2f37;
+}
+QMenu {
+    background-color: #20242a;
+    color: #e4e8ee;
+    border: 1px solid #3b414b;
+    padding: 4px;
+}
+QMenu::item {
+    padding: 6px 24px 6px 10px;
+}
+QMenu::item:selected {
+    background-color: #343b45;
+}
+QPushButton {
+    background-color: #2a2f36;
+    color: #eef1f5;
+    border: 1px solid #454c57;
+    border-radius: 5px;
+    padding: 6px 12px;
+}
+QPushButton:hover {
+    background-color: #343a43;
+    border-color: #596271;
+}
+QPushButton:pressed {
+    background-color: #24282e;
+}
+QPushButton:disabled {
+    background-color: #22262b;
+    color: #747b85;
+    border-color: #343941;
+}
+QLineEdit, QSpinBox {
+    background-color: #111419;
+    color: #eef1f5;
+    border: 1px solid #444b55;
+    border-radius: 4px;
+    padding: 6px;
+    selection-background-color: #356f9f;
+}
+QLineEdit:focus, QSpinBox:focus {
+    border-color: #67a9d8;
+}
+QCheckBox {
+    spacing: 6px;
+}
+QCheckBox::indicator {
+    width: 15px;
+    height: 15px;
+}
+QFrame#keyInspector {
+    background-color: #20242a;
+    border: 1px solid #353b44;
+    border-radius: 7px;
+}
+QLabel#provisionalBanner {
+    background-color: #2b2922;
+    color: #d9c98c;
+    border: 1px solid #5f5738;
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+}
+QStatusBar {
+    background-color: #121519;
+    color: #bfc6cf;
+    border-top: 1px solid #30353d;
+}
+QStatusBar QLabel {
+    background: transparent;
+    color: #bfc6cf;
+    padding: 2px 8px;
+}
+QLabel#simulatedDeviceStatusLabel {
+    border-left: 1px solid #3a4049;
+}
+QToolTip {
+    background-color: #292e35;
+    color: #eef1f5;
+    border: 1px solid #4b535f;
+    padding: 4px;
+}
+"""
+
+
+KEYCAP_STYLESHEET = """
+QPushButton {
+    background-color: #30363e;
+    color: #eef2f6;
+    border: 2px solid #4b535e;
+    border-bottom: 4px solid #171a1e;
+    border-radius: 8px;
+    padding: 6px 4px 8px 4px;
+    font-weight: 600;
+}
+QPushButton:hover {
+    background-color: #3a424c;
+    border-color: #697483;
+    border-bottom-color: #22272d;
+}
+QPushButton:checked {
+    background-color: #294e68;
+    color: #ffffff;
+    border-color: #77bce8;
+    border-bottom-color: #3f87b6;
+}
+QPushButton:checked:hover {
+    background-color: #315c79;
+}
+"""
+
+
 class Keyboard75Window(QMainWindow):
     """Main window for editing an in-memory keyboard layout."""
 
@@ -58,7 +187,7 @@ class Keyboard75Window(QMainWindow):
         self.current_profile_path: Path | None = None
         self.dirty = False
 
-        self.resize(1240, 520)
+        self.setStyleSheet(DARK_STYLESHEET)
         self._build_file_menu()
         self._build_layout_menu()
 
@@ -81,6 +210,7 @@ class Keyboard75Window(QMainWindow):
         self.setCentralWidget(central_widget)
         self._build_status_bar()
         self._refresh_profile_status()
+        self._resize_for_layout()
 
     def _build_file_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -125,8 +255,12 @@ class Keyboard75Window(QMainWindow):
 
     def _build_top_bar(self) -> QWidget:
         top_bar = QWidget(self)
-        layout = QHBoxLayout(top_bar)
+        layout = QVBoxLayout(top_bar)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        heading_row = QHBoxLayout()
+        controls_row = QHBoxLayout()
 
         title = QLabel("Keyboard75 Layout Editor", top_bar)
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
@@ -147,24 +281,25 @@ class Keyboard75Window(QMainWindow):
         self.disconnect_button.setObjectName("disconnectButton")
         self.disconnect_button.clicked.connect(self.disconnect_device)
 
-        layout.addWidget(title)
-        layout.addStretch()
-        layout.addWidget(self.host_connected_checkbox)
-        layout.addWidget(self.device_status_label)
-        layout.addWidget(self.transport_label)
-        layout.addWidget(self.connect_button)
-        layout.addWidget(self.disconnect_button)
+        heading_row.addWidget(title)
+        heading_row.addStretch()
+        heading_row.addWidget(self.host_connected_checkbox)
+        controls_row.addWidget(self.device_status_label)
+        controls_row.addWidget(self.transport_label)
+        controls_row.addStretch()
+        controls_row.addWidget(self.connect_button)
+        controls_row.addWidget(self.disconnect_button)
+        layout.addLayout(heading_row)
+        layout.addLayout(controls_row)
         self._refresh_device_status()
         return top_bar
 
     def _build_provisional_banner(self) -> QLabel:
         banner = QLabel(self.layout.label, self)
         banner.setObjectName("provisionalBanner")
-        banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        banner.setStyleSheet(
-            "background: #f4c542; color: #241f0c; border: 2px solid #9b7600; "
-            "border-radius: 5px; font-size: 16px; font-weight: 700; padding: 8px;"
-        )
+        banner.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        banner.setMaximumHeight(24)
+        banner.setVisible(self._layout_is_provisional())
         return banner
 
     def _build_key_grid(self) -> QWidget:
@@ -172,32 +307,52 @@ class Keyboard75Window(QMainWindow):
         self.key_widgets = {}
         grid = QGridLayout(grid_container)
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(5)
-        grid.setVerticalSpacing(5)
+        key_width, key_height, spacing = self._key_grid_metrics()
+        grid.setHorizontalSpacing(spacing)
+        grid.setVerticalSpacing(spacing)
 
         for key in self.layout.keys:
             button = QPushButton(self._button_text(key), grid_container)
             button.setObjectName(f"keyButton_{key.key_id}")
             button.setCheckable(True)
-            button.setMinimumSize(58, 58)
-            button.setSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-            )
-            button.setStyleSheet(
-                "QPushButton { background: #f7f7f7; color: #202020; "
-                "border: 1px solid #777; border-bottom: 4px solid #555; "
-                "border-radius: 7px; padding: 4px; font-weight: 600; } "
-                "QPushButton:hover { background: #ffffff; } "
-                "QPushButton:checked { background: #cfe5ff; border-color: #2774b8; "
-                "border-bottom: 4px solid #18558a; }"
-            )
+            button.setFixedSize(key_width, key_height)
+            button.setStyleSheet(KEYCAP_STYLESHEET)
             button.clicked.connect(
                 lambda _checked=False, selected=key: self.select_key(selected)
             )
             grid.addWidget(button, key.y, key.x, key.h, key.w)
             self.key_widgets[key.key_id] = button
 
+        grid_container.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
         return grid_container
+
+    def _key_grid_metrics(self) -> tuple[int, int, int]:
+        """Return compact keycap dimensions and spacing for the active layout."""
+        if self.layout.cols >= 10:
+            return (58, 58, 5)
+        if self.layout.key_count <= 12:
+            return (64, 60, 8)
+        return (60, 58, 6)
+
+    def _layout_is_provisional(self) -> bool:
+        """Return whether the active layout is the built-in provisional L75."""
+        return self.layout.name == L75.name and self.layout.label == L75.label
+
+    def _resize_for_layout(self) -> None:
+        """Resize the window around the active key grid without empty grid space."""
+        key_width, key_height, spacing = self._key_grid_metrics()
+        grid_width = self.layout.cols * key_width + max(0, self.layout.cols - 1) * spacing
+        grid_height = self.layout.rows * key_height + max(0, self.layout.rows - 1) * spacing
+
+        if self.layout.key_count >= 50:
+            target_width = 1240
+            target_height = 520
+        else:
+            target_width = max(620, grid_width + 250 + 64)
+            target_height = max(410, grid_height + 240)
+        self.resize(target_width, target_height)
 
     def switch_layout(self, layout: Layout) -> bool:
         """Switch to a copy of *layout* while retaining shared assignments."""
@@ -224,8 +379,10 @@ class Keyboard75Window(QMainWindow):
         self.content_layout.replaceWidget(old_grid, self.key_grid_container)
         old_grid.deleteLater()
         self.layout_banner.setText(self.layout.label)
+        self.layout_banner.setVisible(self._layout_is_provisional())
         self.device.set_key_ids(key.key_id for key in self.layout.keys)
         self._set_dirty(True)
+        self._resize_for_layout()
         return True
 
     def _open_custom_layout_dialog(self) -> None:
@@ -378,7 +535,9 @@ class Keyboard75Window(QMainWindow):
         unsaved = " — (unsaved)" if self.dirty else ""
         self.local_profile_status_label.setText(f"Local profile: {name}{unsaved}")
         title_unsaved = " (unsaved)" if self.dirty else ""
-        self.setWindowTitle(f"Keyboard75 — {name}{title_unsaved}")
+        self.setWindowTitle(
+            f"Keyboard75 — {self.layout.name} — {name}{title_unsaved}"
+        )
 
     def confirm_unsaved_changes(self) -> bool:
         """Offer to save or discard local edits; return whether to proceed."""

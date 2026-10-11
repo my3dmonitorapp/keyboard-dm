@@ -1,2 +1,6 @@
 /reference/vendor-12key/
 .codex-home/
+.venv/
+__pycache__/
+*.pyc
+profiles/*.bak

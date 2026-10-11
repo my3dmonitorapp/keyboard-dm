@@ -696,8 +696,9 @@ class Keyboard75Window(QMainWindow):
         return None if action is None else action.label
 
     @classmethod
-    def _device_assignment(cls, assignment: Any) -> str:
-        return cls._assignment_label(assignment) or "NONE"
+    def _device_assignment(cls, assignment: Any) -> dict[str, Any] | None:
+        action = cls._action_from_assignment(assignment)
+        return None if action is None else cls._typed_payload(action)
 
     @classmethod
     def _button_text(cls, key: Key) -> str:
@@ -843,7 +844,8 @@ class Keyboard75Window(QMainWindow):
         self._compatibility_clear_requested = False
         if self.device.is_connected():
             self.device.send_key_assignment(
-                self.selected_key.key_id, "NONE" if action is None else action.label
+                self.selected_key.key_id,
+                None if action is None else self._typed_payload(action),
             )
         self.selected_key.assignment = assignment
         if self.profile is not None:

@@ -7,9 +7,10 @@ operations.  It models only the small device API needed by the desktop app.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from typing import Any
 
+from .action import Action, ActionValidationError
 from .layouts import L75
-from .profile import MAX_ASSIGNMENT_LENGTH
 
 
 class DeviceConnectionError(RuntimeError):
@@ -37,22 +38,37 @@ class SimulatedESP32S3Device:
         if key_ids is None:
             key_ids = (key.key_id for key in L75.keys)
         self._key_states = {key_id: "NONE" for key_id in key_ids}
+        self._key_actions: dict[str, dict[str, Any] | None] = {
+            key_id: None for key_id in self._key_states
+        }
 
     def set_key_ids(
         self,
         key_ids: Iterable[str],
-        assignments: Mapping[str, str] | None = None,
+        assignments: Mapping[str, dict[str, Any] | str | None] | None = None,
     ) -> None:
         """Adopt a key set, optionally replacing states from an active project."""
         previous_states = self._key_states
-        self._key_states = {
-            key_id: (
-                assignments.get(key_id, "NONE")
-                if assignments is not None
-                else previous_states.get(key_id, "NONE")
-            )
-            for key_id in key_ids
-        }
+        previous_actions = self._key_actions
+        self._key_states = {}
+        self._key_actions = {}
+        for key_id in key_ids:
+            if assignments is None:
+                self._key_states[key_id] = previous_states.get(key_id, "NONE")
+                action = previous_actions.get(key_id)
+                self._key_actions[key_id] = None if action is None else dict(action)
+                continue
+
+            assignment = assignments.get(key_id)
+            if isinstance(assignment, dict):
+                action = Action.from_json(assignment)
+                self._key_actions[key_id] = action.to_json()
+                self._key_states[key_id] = action.label
+            else:
+                # Label-only mappings remain supported for display compatibility,
+                # but never enter the structured firmware-facing store.
+                self._key_actions[key_id] = None
+                self._key_states[key_id] = assignment or "NONE"
 
     def connect(self) -> None:
         """Connect the deterministic in-memory device."""
@@ -83,21 +99,45 @@ class SimulatedESP32S3Device:
         self._host_connected = connected
         self._transport = "usb" if connected else "ble"
 
-    def send_key_assignment(self, key_id: str, assignment: str) -> None:
-        """Store one assignment after validating the key and assignment value."""
+    def send_key_assignment(
+        self, key_id: str, payload: dict[str, Any] | None
+    ) -> None:
+        """Validate and store one structured action, or clear it with ``None``."""
         if key_id not in self._key_states:
             raise ValueError(f"Unknown key ID {key_id!r} for the simulated device")
-        if not isinstance(assignment, str):
-            raise TypeError("Assignment must be a string")
-        if len(assignment) > MAX_ASSIGNMENT_LENGTH:
-            raise ValueError(
-                f"Assignment for {key_id} exceeds {MAX_ASSIGNMENT_LENGTH} characters"
-            )
+        if payload is not None and not isinstance(payload, dict):
+            raise TypeError("Action payload must be a dict or None")
+        try:
+            action = None if payload is None else Action.from_json(payload)
+        except ActionValidationError:
+            raise
         if not self._connected:
             raise DeviceConnectionError(
                 "Cannot send a key assignment while the device is disconnected"
             )
-        self._key_states[key_id] = assignment
+        self._key_actions[key_id] = None if action is None else action.to_json()
+        self._key_states[key_id] = "NONE" if action is None else action.label
+
+    def get_key_actions(
+        self, key_ids: Iterable[str] | None = None
+    ) -> dict[str, dict[str, Any] | None]:
+        """Return copies of canonical structured payloads, or ``{}`` if offline."""
+        if not self._connected:
+            return {}
+        selected_ids = tuple(self._key_actions) if key_ids is None else tuple(key_ids)
+        unknown_ids = [key_id for key_id in selected_ids if key_id not in self._key_actions]
+        if unknown_ids:
+            raise ValueError(
+                f"Unknown key ID {unknown_ids[0]!r} for the simulated device"
+            )
+        return {
+            key_id: (
+                None
+                if self._key_actions[key_id] is None
+                else Action.from_json(self._key_actions[key_id]).to_json()
+            )
+            for key_id in selected_ids
+        }
 
     def get_key_states(self) -> dict[str, str]:
         """Return a copy of all key states, or ``{}`` while disconnected."""

@@ -1,5 +1,14 @@
 # Documentation Changelog
 
+## 2026-10-11 — Desktop application Milestone S1.1
+
+- Expanded the configurator from the provisional 75-key board to built-in 6-, 9-, 12-, and 75-key layouts plus custom 2–500-key grids with stable row-major IDs.
+- Hardened version 1 profile persistence for variable key sets, clear mismatch errors, `.json` suffix handling, save feedback, and unsaved-changes protection.
+- Added named local keyboard projects that restore layout metadata, geometry, and assignments while keeping legacy 75-key profiles compatible.
+- Made the simulated device follow the active layout and clarified throughout the UI and documentation that local profile/project saves never write to hardware.
+- Added headless regression coverage across all built-in sizes and a custom size, GUI layout selection and save/reopen, error-state preservation, close guards, small-layout device operation, legacy compatibility, and a 12-key project smoke flow.
+- Marked Track A S1.1 complete; subsequent Track A milestones remain TBD.
+
 ## 2026-10-11 — Desktop application Milestone S1
 
 - Completed Track A Milestone S1 with the **PROVISIONAL** 75-key PySide6 layout editor.

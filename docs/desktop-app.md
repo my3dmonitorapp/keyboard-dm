@@ -1,10 +1,10 @@
 # Keyboard75 Desktop Application
 
-The Milestone S1 desktop application edits the **PROVISIONAL** 5 × 15 layout and communicates only with its deterministic simulated ESP32-S3 device. It makes no USB, BLE, network, or hardware calls.
+Milestone S1.1 is a universal PySide6 keyboard configurator for built-in 6-, 9-, 12-, and 75-key layouts plus custom grids from 2 to 500 keys. It communicates only with a deterministic simulated ESP32-S3 device: the application makes no real USB, BLE, network, firmware, or hardware calls.
 
 ## Setup
 
-From the repository root, create and activate a Python virtual environment, then install the two development dependencies:
+From the repository root, create and activate a Python virtual environment, then install the development dependencies:
 
 ```bash
 python3 -m venv .venv
@@ -12,62 +12,56 @@ source .venv/bin/activate
 python -m pip install PySide6 pytest
 ```
 
-The repository's existing `.venv` can be used directly without activation by running `.venv/bin/python` in the commands below.
+The repository's existing `.venv` can also be used directly by replacing `python` with `.venv/bin/python` in the commands below.
 
 ## Launch
-
-With the virtual environment active:
 
 ```bash
 python -m desktop_app
 ```
 
-Or directly:
+Choose **Layout → L06**, **L09**, **L12**, or **L75** for a built-in layout. Each layout uses stable row-major IDs from K01 through its key count. L75 remains a provisional 15 × 5 physical arrangement. Choose **Layout → Custom...** to enter a key count and optional column/row dimensions; omitted dimensions are derived automatically.
 
-```bash
-.venv/bin/python -m desktop_app
-```
+Switching layouts preserves assignments for shared key IDs and initializes newly added keys to `NONE`. If the current layout has unsaved changes, the application asks whether to save, discard, or cancel before switching.
 
-The window shows all 75 stable key IDs, their assignments, profile actions, and the simulated device controls. The displayed physical arrangement is **PROVISIONAL**, not a final keyboard layout.
+## Local profiles and hardware configuration
+
+**File → Save Local Profile...** writes a version 1 JSON file on the local computer. A missing `.json` suffix is added automatically. **File → Open Local Profile...** accepts the profile only when its key IDs exactly match the active layout; a mismatch displays a clear error and leaves the current assignments intact.
+
+Saving or loading a local profile is never a hardware write or hardware read. The separate device controls affect only the in-memory simulator. No real keyboard is configured by this application.
+
+The title and status bar show the current local profile and `(unsaved)` state. Closing, opening another profile, or switching layouts while changes are pending invokes the unsaved-changes guard.
+
+## Keyboard projects
+
+A project combines a name, layout metadata, geometry, and version 1 assignments in one `*.kb75.json` file. Use **File → Projects → New Project...**, **Save Project**, and **Open Project** to manage projects. Opening a project restores both its layout and assignments and re-synchronizes the simulated device's key set.
+
+Project and profile user data belongs in the repository's ignored `profiles/` directory. These files are local working data and are not source-controlled.
 
 ## Smoke test
 
-The smoke entrypoint selects K07, assigns `A`, saves and reloads a temporary profile, connects the simulated device, verifies USB preference for a connected host, sends the assignment, checks device state, and exits:
+The smoke flow verifies the real GUI, a 75-key profile round-trip, simulated USB preference, a switch to the 12-key layout, and a 12-key project save/reload:
 
 ```bash
-.venv/bin/python -m desktop_app --smoke
+python -m desktop_app --smoke
 ```
 
-It forces Qt's offscreen platform, so the same command works without a display. This explicit form works too:
-
-```bash
-QT_QPA_PLATFORM=offscreen .venv/bin/python -m desktop_app --smoke
-```
-
-A successful run exits 0 and prints `Keyboard75 smoke test passed`. A failed check exits nonzero with a message beginning `Keyboard75 smoke test FAILED`.
+The command forces Qt's offscreen platform, exits 0 on success, and prints `Keyboard75 smoke test passed`. A failed check exits nonzero with a message beginning `Keyboard75 smoke test FAILED`.
 
 ## Tests
 
-Run the complete suite from the repository root:
+Run the complete suite headlessly from the repository root:
 
 ```bash
-.venv/bin/python -m pytest tests/ -q
+QT_QPA_PLATFORM=offscreen python -m pytest tests/ -q
 ```
 
-Run only the end-to-end smoke pytest with:
+Run only the end-to-end smoke test with:
 
 ```bash
-.venv/bin/python -m pytest tests/test_smoke.py -q
+QT_QPA_PLATFORM=offscreen python -m pytest tests/test_smoke.py -q
 ```
-
-## Profiles
-
-Profiles are version 1 JSON files containing assignments for every key from K01 through K75. Choose the location through **File → Save** and **File → Open**. There is no implicit system-wide profile directory; `profiles/` under the repository root is the recommended location for local development files.
-
-The command-line smoke test uses an automatically removed temporary directory and does not create a persistent profile.
 
 ## Troubleshooting: no graphical display
 
-The interactive application needs an X11, Wayland, or other Qt-supported display. On a headless machine, use the smoke command or the pytest suite; both configure `QT_QPA_PLATFORM=offscreen`.
-
-If the interactive launch reports that a graphical display is required, start it in a desktop session with `DISPLAY` or `WAYLAND_DISPLAY` configured. Do not use offscreen mode for interactive editing because no visible window will be available.
+The interactive application needs an X11, Wayland, or another Qt-supported display. On a headless machine, use the smoke command or pytest suite. If normal launch reports that a graphical display is required, start it in a desktop session with `DISPLAY` or `WAYLAND_DISPLAY` configured; offscreen mode does not create a visible interactive window.

@@ -28,6 +28,7 @@ def _require(condition: bool, message: str) -> None:
 def _run_smoke_flow(application: object, profile_path: Path) -> None:
     """Exercise the real window, profile, and simulated-device integrations."""
     from .app import Keyboard75Window
+    from .layouts import L12
 
     window = Keyboard75Window()
     try:
@@ -79,6 +80,39 @@ def _run_smoke_flow(application: object, profile_path: Path) -> None:
             window.device.get_key_states().get("K07") == "A",
             "simulated device did not store K07 assignment A",
         )
+
+        # Exercise a second key count and project persistence in the same real
+        # GUI flow. The explicit clean state avoids an interactive prompt.
+        window._set_dirty(False)
+        _require(window.switch_layout(L12), "could not switch to the L12 layout")
+        _require(
+            len(window.key_widgets) == 12
+            and list(window.key_widgets) == [
+                f"K{number:02d}" for number in range(1, 13)
+            ],
+            "L12 did not build 12 stable key widgets",
+        )
+        window._set_dirty(False)
+        project_path = window.new_project("Smoke 12", profile_path.parent)
+        _require(project_path is not None, "could not create the 12-key smoke project")
+        window.key_widgets["K12"].click()
+        window.assignment_edit.setText("Enter")
+        window.apply_button.click()
+        window.save_project()
+        window.assignment_edit.setText("NONE")
+        window.apply_button.click()
+        window._set_dirty(False)
+        _require(window.load_project(project_path), "could not reload smoke project")
+        _require(
+            window.layout.key_count == 12
+            and window.layout.keys[-1].key_id == "K12"
+            and window.layout.keys[-1].assignment == "Enter",
+            "12-key project assignment did not survive save and reload",
+        )
+        _require(
+            window.device.get_key_states().get("K12") == "Enter",
+            "simulated device did not adopt the reloaded 12-key project",
+        )
     finally:
         if window.device.is_connected():
             window.disconnect_device()
@@ -103,8 +137,9 @@ def run_smoke() -> int:
         return 1
 
     print(
-        "Keyboard75 smoke test passed: 75 key widgets; K07=A profile "
-        "round-trip; simulated device connected via USB; device K07=A."
+        "Keyboard75 smoke test passed: 75-key K07=A profile round-trip; "
+        "simulated device connected via USB; 12-key K12=Enter project "
+        "save/reload verified."
     )
     return 0
 

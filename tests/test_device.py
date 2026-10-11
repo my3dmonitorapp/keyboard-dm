@@ -3,6 +3,7 @@
 import pytest
 
 from desktop_app.device import DeviceConnectionError, SimulatedESP32S3Device
+from desktop_app.layouts import L06, L12
 
 
 def test_connect_and_disconnect() -> None:
@@ -55,6 +56,18 @@ def test_device_adopts_new_key_set_and_preserves_shared_states() -> None:
     device.set_key_ids(("K01", "K02", "K03"))
 
     assert device.get_key_states() == {"K01": "NONE", "K02": "B", "K03": "NONE"}
+
+
+@pytest.mark.parametrize("layout", [L06, L12], ids=["6-keys", "12-keys"])
+def test_device_reads_and_writes_supported_small_layouts(layout) -> None:
+    key_ids = [key.key_id for key in layout.keys]
+    device = SimulatedESP32S3Device(key_ids)
+    device.connect()
+
+    device.send_key_assignment(key_ids[-1], "Enter")
+
+    assert list(device.get_key_states()) == key_ids
+    assert device.get_key_states()[key_ids[-1]] == "Enter"
 
 
 @pytest.mark.parametrize("key_id", ["K00", "K76", "K7", "not-a-key"])

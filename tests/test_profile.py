@@ -11,6 +11,7 @@ from desktop_app.profile import (
     save_profile,
     validate_profile,
 )
+from desktop_app.layouts import L06, L09, L12, L75, make_custom_layout
 
 
 LEGACY_KEY_IDS = tuple(f"K{number:02d}" for number in range(1, 76))
@@ -34,6 +35,36 @@ def test_profile_round_trip_refreshes_updated_timestamp(tmp_path) -> None:
     assert loaded["device"] == "/project-esp32s3"
     assert loaded["updated"] != "2000-01-01T00:00:00+00:00"
     assert loaded["keys"]["K75"]["assignment"] == "NONE"
+
+
+@pytest.mark.parametrize(
+    ("name", "layout"),
+    [
+        ("l06", L06),
+        ("l09", L09),
+        ("l12", L12),
+        ("l75", L75),
+        ("custom-17", make_custom_layout(17, cols=5)),
+    ],
+)
+def test_every_supported_key_count_round_trips_through_json(
+    tmp_path, name, layout
+) -> None:
+    assignments = {
+        key.key_id: f"Action-{index}"
+        for index, key in enumerate(layout.keys, start=1)
+    }
+    path = tmp_path / f"{name}.json"
+
+    written = save_profile(path, assignments)
+    loaded = load_profile(path, key_ids=(key.key_id for key in layout.keys))
+
+    assert loaded == written
+    assert list(loaded["keys"]) == [key.key_id for key in layout.keys]
+    assert {
+        key_id: key_data["assignment"]
+        for key_id, key_data in loaded["keys"].items()
+    } == assignments
 
 
 def test_unknown_profile_version_is_rejected(tmp_path) -> None:
@@ -84,6 +115,18 @@ def test_missing_key_is_rejected(tmp_path) -> None:
 
     with pytest.raises(ProfileError, match="missing key IDs: K42"):
         load_profile(path, key_ids=LEGACY_KEY_IDS)
+
+
+def test_legacy_v1_75_key_file_loads_unchanged(tmp_path) -> None:
+    path = tmp_path / "legacy-v1-75.json"
+    legacy = create_profile(_assignments())
+    legacy["keys"]["K01"]["assignment"] = "Escape"
+    legacy["keys"]["K75"]["assignment"] = "Enter"
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    loaded = load_profile(path, key_ids=LEGACY_KEY_IDS)
+
+    assert loaded == legacy
 
 
 def test_assignment_over_32_characters_is_rejected(tmp_path) -> None:

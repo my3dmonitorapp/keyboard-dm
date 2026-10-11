@@ -16,7 +16,7 @@ Target MCU: ESP32-S3 only
 
 ### Track A — Desktop application
 
-Status: **S1 complete (2026-10-11)**
+Status: **S1.1 complete (2026-10-11)**
 
 Track A runs independently against a simulated ESP32-S3 device until verified hardware is available. The provisional layout remains clearly labeled and does not define final key placement or firmware wiring.
 
@@ -31,7 +31,15 @@ Milestone S1 delivered:
 - A real offscreen smoke entrypoint (`python -m desktop_app --smoke`) covering the window, K07 assignment, profile round-trip, USB preference, and simulated device state.
 - Automated tests for the layout model, GUI construction, profiles, simulated device, and end-to-end smoke flow.
 
-Future Track A milestones remain **TBD** and must not assume unresolved physical layout, wiring, or GPIO decisions.
+Milestone S1.1 delivered:
+
+- Built-in 6-, 9-, 12-, and provisional 75-key layouts plus custom 2–500-key grids, all using stable row-major key IDs.
+- Variable-size version 1 local profiles with exact key-set validation, legacy 75-key compatibility, visible save state, and unsaved-change guards.
+- Named local keyboard projects containing layout metadata, geometry, and assignments.
+- Layout-aware simulated-device state for every supported size.
+- Headless regression coverage for JSON round-trips, GUI layout selection and save/reopen, mismatch handling, close guards, project switching, and the extended 12-key smoke flow.
+
+Track A milestones after S1.1 remain **TBD** and must not assume unresolved physical layout, wiring, or GPIO decisions.
 
 ### Track B — ESP32-S3 firmware
 

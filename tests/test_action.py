@@ -10,6 +10,7 @@ from desktop_app.action import (
     ActionValidationError,
     MEDIA_KEYS,
     MODIFIERS,
+    SINGLE_KEYS,
     MediaAction,
     ModifierAction,
     ShortcutAction,
@@ -18,6 +19,30 @@ from desktop_app.action import (
     register_action_type,
     validate_action,
 )
+
+
+def test_every_required_single_key_assignment_serializes_and_restores() -> None:
+    """Cover letters, digits, editing keys, arrows, and F1--F24."""
+    required_keys = (
+        *tuple("abcdefghijklmnopqrstuvwxyz"),
+        *tuple("0123456789"),
+        "enter",
+        "escape",
+        "tab",
+        "space",
+        "backspace",
+        "delete",
+        "left",
+        "right",
+        "up",
+        "down",
+        *(f"f{number}" for number in range(1, 25)),
+    )
+
+    assert set(required_keys) <= set(SINGLE_KEYS)
+    for key_id in required_keys:
+        action = SingleKeyAction(key_id)
+        assert Action.from_json(action.to_json()) == action
 
 
 def test_single_key_construction_exposes_stable_hid_metadata() -> None:
@@ -40,6 +65,7 @@ def test_single_key_construction_exposes_stable_hid_metadata() -> None:
     ],
 )
 def test_serialization_round_trip(action: Action) -> None:
+    """Restore equal actions from JSON, including a keyboard shortcut."""
     restored = Action.from_json(action.to_json())
 
     assert restored == action
@@ -148,6 +174,7 @@ def test_media_actions_use_consumer_hid_domain(media_key: str, usage_id: int) ->
         {},
         {"type": ""},
         {"type": "unknown"},
+        {"type": "key"},
         {"type": "key", "key": "not-a-key"},
         {"type": "modifier", "modifier": "hyper", "event": "down"},
         {"type": "modifier", "modifier": "lctrl", "event": "tap"},

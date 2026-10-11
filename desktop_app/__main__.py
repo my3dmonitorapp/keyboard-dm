@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import tempfile
@@ -27,8 +28,14 @@ def _require(condition: bool, message: str) -> None:
 
 def _run_smoke_flow(application: object, profile_path: Path) -> None:
     """Exercise the real window, profile, and simulated-device integrations."""
+    from .action import ShortcutAction, SingleKeyAction
     from .app import Keyboard75Window
     from .layouts import L12
+
+    def choose(combo: object, value: str) -> None:
+        index = combo.findData(value)
+        _require(index >= 0, f"editor option {value!r} was not available")
+        combo.setCurrentIndex(index)
 
     window = Keyboard75Window()
     try:
@@ -47,25 +54,41 @@ def _run_smoke_flow(application: object, profile_path: Path) -> None:
             "K07 was not selected",
         )
 
-        window.assignment_edit.setText("A")
+        choose(window.action_type_combo, "shortcut")
+        window.modifier_checkboxes["lctrl"].setChecked(True)
+        window.modifier_checkboxes["lshift"].setChecked(True)
+        choose(window.shortcut_key_combo, "s")
         window.apply_button.click()
-        _require(window.selected_key.assignment == "A", "K07 assignment was not A")
+        shortcut = ShortcutAction(("lctrl", "lshift"), "s")
+        _require(
+            window.selected_key.assignment == shortcut.to_json(),
+            "K07 assignment was not Ctrl+Shift+S",
+        )
 
         window.save_profile(str(profile_path))
-        window.assignment_edit.setText("NONE")
-        window.apply_button.click()
+        saved_document = json.loads(profile_path.read_text(encoding="utf-8"))
         _require(
-            window.selected_key.assignment == "NONE",
-            "could not reset K07 before profile reload",
+            saved_document["profile_version"] == 2
+            and saved_document["keys"]["K07"]["assignment"] == shortcut.to_json(),
+            "saved profile JSON did not contain the typed K07 shortcut",
         )
-        # The smoke flow intentionally discards that temporary local edit.
-        window._set_dirty(False)
-        window.load_profile(str(profile_path))
-        _require(
-            window.selected_key.assignment == "A"
-            and window.assignment_edit.text() == "A",
-            "saved K07 assignment did not survive profile reload",
-        )
+
+        reopened = Keyboard75Window()
+        try:
+            _require(reopened.load_profile(profile_path), "could not reopen S1.2 profile")
+            reopened.key_widgets["K07"].click()
+            _require(
+                reopened.selected_key.assignment == shortcut.to_json()
+                and reopened.action_type_combo.currentData() == "shortcut"
+                and reopened.modifier_checkboxes["lctrl"].isChecked()
+                and reopened.modifier_checkboxes["lshift"].isChecked()
+                and reopened.shortcut_key_combo.currentData() == "s",
+                "typed K07 shortcut did not survive profile reopen",
+            )
+        finally:
+            reopened._set_dirty(False)
+            reopened.close()
+            application.processEvents()
 
         window.connect_device()
         _require(window.device.is_connected(), "simulated device did not connect")
@@ -74,11 +97,10 @@ def _run_smoke_flow(application: object, profile_path: Path) -> None:
             window.device.get_transport() == "usb",
             "simulated device did not prefer USB for a connected host",
         )
-        window.assignment_edit.setText("A")
         window.apply_button.click()
         _require(
-            window.device.get_key_states().get("K07") == "A",
-            "simulated device did not store K07 assignment A",
+            window.device.get_key_states().get("K07") == "Ctrl+Shift+S",
+            "simulated device did not store the K07 shortcut",
         )
 
         # Exercise a second key count and project persistence in the same real
@@ -96,17 +118,17 @@ def _run_smoke_flow(application: object, profile_path: Path) -> None:
         project_path = window.new_project("Smoke 12", profile_path.parent)
         _require(project_path is not None, "could not create the 12-key smoke project")
         window.key_widgets["K12"].click()
-        window.assignment_edit.setText("Enter")
+        choose(window.action_type_combo, "key")
+        choose(window.single_key_combo, "enter")
         window.apply_button.click()
         window.save_project()
-        window.assignment_edit.setText("NONE")
-        window.apply_button.click()
+        window.clear_button.click()
         window._set_dirty(False)
         _require(window.load_project(project_path), "could not reload smoke project")
         _require(
             window.layout.key_count == 12
             and window.layout.keys[-1].key_id == "K12"
-            and window.layout.keys[-1].assignment == "Enter",
+            and window.layout.keys[-1].assignment == SingleKeyAction("enter").to_json(),
             "12-key project assignment did not survive save and reload",
         )
         _require(
@@ -137,7 +159,8 @@ def run_smoke() -> int:
         return 1
 
     print(
-        "Keyboard75 smoke test passed: 75-key K07=A profile round-trip; "
+        "Keyboard75 smoke test passed: 75-key K07=Ctrl+Shift+S typed profile "
+        "save/reopen and JSON verification; "
         "simulated device connected via USB; 12-key K12=Enter project "
         "save/reload verified."
     )

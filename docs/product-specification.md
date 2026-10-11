@@ -72,6 +72,8 @@ The ESP32-S3 is the project's single and only target MCU. This confirmed decisio
 
 ### 5.2 Configuration and persistence
 
+- The S1.2 desktop configuration model represents assignments as typed actions: a single keyboard key, an explicit sided modifier down/up event, a shortcut containing one to four sided modifiers plus one keyboard key, or one of six consumer-HID media controls.
+- Desktop local profiles use schema version 2 and store structured action payloads. Version 1 string assignments are migrated deterministically; unrecognized legacy strings are retained verbatim rather than discarded.
 - Key assignments, macros, shortcuts, profiles, lighting settings, and relevant user preferences shall be stored in ESP32-S3-accessible non-volatile flash.
 - No external configuration storage device is assumed.
 - Settings shall have a defined schema/version so later product revisions can validate or migrate stored data.
@@ -122,3 +124,4 @@ Targets and test procedures that depend on unfinished hardware remain gated and 
 ## 9. Change note
 
 - **2026-10-11 — v1.0:** Established the first product specification in this repository. Confirmed the ESP32-S3 as the sole target MCU, replacing the previously planned standard ESP32. No pin-level decisions are made by this specification.
+- **2026-10-11 — S1.2 note:** Documented the desktop typed-action model and version 2 local-profile schema; this does not authorize or define firmware transport.

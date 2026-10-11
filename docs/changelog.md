@@ -1,5 +1,14 @@
 # Documentation Changelog
 
+## 2026-10-11 — Desktop application Milestone S1.2
+
+- T1: Added a typed, extensible action model for keyboard keys, sided modifier events, shortcuts, media controls, and losslessly retained legacy values.
+- T2: Upgraded local profiles to version 2 and added deterministic, lossless migration of version 1 string assignments.
+- T3: Replaced the plain-text assignment field with a compact action editor for single keys, modifiers, shortcuts, media controls, apply, and clear.
+- T4: Updated the simulated device to accept structured actions, retain canonical payloads, expose readable wire labels, and round-trip actions.
+- T5: Closed the verification matrix, extended the GUI smoke flow to typed shortcut save/reopen, refreshed user documentation, and completed the final regression sweep.
+- Deliverable state: S1.2 is complete for local profile/project editing and deterministic simulated-device integration. The optional shortcut recorder was not implemented; macro and layer extension interfaces exist but recording and layer behavior are not implemented; real BLE/USB HID transport remains pending the firmware hardware gate.
+
 ## 2026-10-11 — Desktop application Milestone S1.1
 
 - Expanded the configurator from the provisional 75-key board to built-in 6-, 9-, 12-, and 75-key layouts plus custom 2–500-key grids with stable row-major IDs.

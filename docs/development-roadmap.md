@@ -16,7 +16,7 @@ Target MCU: ESP32-S3 only
 
 ### Track A — Desktop application
 
-Status: **S1.1 complete (2026-10-11)**
+Status: **S1.2 complete (2026-10-11)**
 
 Track A runs independently against a simulated ESP32-S3 device until verified hardware is available. The provisional layout remains clearly labeled and does not define final key placement or firmware wiring.
 
@@ -39,7 +39,14 @@ Milestone S1.1 delivered:
 - Layout-aware simulated-device state for every supported size.
 - Headless regression coverage for JSON round-trips, GUI layout selection and save/reopen, mismatch handling, close guards, project switching, and the extended 12-key smoke flow.
 
-Track A milestones after S1.1 remain **TBD** and must not assume unresolved physical layout, wiring, or GPIO decisions.
+Milestone S1.2 delivered:
+
+- Typed keyboard, sided modifier event, shortcut, and consumer-HID media actions with stable serialization and validation.
+- Version 2 local profiles plus deterministic, lossless version 1 migration.
+- A compact typed GUI action editor and structured simulated-device round-trips.
+- Verification coverage for the S1.2 action matrix while retaining S1/S1.1 layout, project, mismatch, and unsaved-change behavior.
+
+Track A milestones after S1.2 remain **TBD** and must not assume unresolved physical layout, wiring, or GPIO decisions. Macro/layer behavior and real BLE/USB HID transport are not implemented; firmware remains gated below.
 
 ### Track B — ESP32-S3 firmware
 

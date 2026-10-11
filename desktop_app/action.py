@@ -583,6 +583,39 @@ class MediaAction(Action):
         return cls(value["key"])
 
 
+@register_action_type
+@dataclass(frozen=True)
+class LegacyAction(Action):
+    """An uninterpreted assignment retained while migrating a v1 profile."""
+
+    raw: str
+    action_type: ClassVar[str] = "legacy"
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    @property
+    def id(self) -> str:
+        return f"legacy:{self.raw}"
+
+    @property
+    def label(self) -> str:
+        return self.raw
+
+    def validate(self) -> LegacyAction:
+        if not isinstance(self.raw, str):
+            raise ActionValidationError("Legacy action raw value must be a string")
+        return self
+
+    def to_json(self) -> dict[str, Any]:
+        return {"type": self.action_type, "raw": self.raw}
+
+    @classmethod
+    def _from_json(cls, value: Mapping[str, Any]) -> LegacyAction:
+        _require_fields(value, {"type", "raw"}, cls.action_type)
+        return cls(value["raw"])
+
+
 def parse_shortcut(label: str) -> ShortcutAction:
     """Parse a shortcut label with 1--4 modifiers and one keyboard key.
 

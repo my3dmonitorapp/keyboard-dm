@@ -5,3 +5,6 @@
 __pycache__/
 *.pyc
 profiles/*.bak
+
+# User keyboard projects (local data, not source)
+profiles/

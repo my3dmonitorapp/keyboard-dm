@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -34,6 +35,15 @@ from .profile import (
     create_profile,
     load_profile as load_profile_file,
     save_profile as save_profile_file,
+)
+from .project import (
+    PROJECTS_DIRECTORY,
+    ProjectError,
+    create_project,
+    list_project_files,
+    load_project as load_project_file,
+    project_path,
+    save_project as save_project_file,
 )
 
 
@@ -185,6 +195,8 @@ class Keyboard75Window(QMainWindow):
         self.key_widgets: dict[str, QPushButton] = {}
         self.profile: dict[str, object] | None = None
         self.current_profile_path: Path | None = None
+        self.current_project_name: str | None = None
+        self.current_project_path: Path | None = None
         self.dirty = False
 
         self.setStyleSheet(DARK_STYLESHEET)
@@ -226,6 +238,24 @@ class Keyboard75Window(QMainWindow):
         save_action.setToolTip("Save local JSON only; this does not write to hardware")
         save_action.triggered.connect(self._save_profile_dialog)
         file_menu.addAction(save_action)
+
+        file_menu.addSeparator()
+        projects_menu = file_menu.addMenu("Projects")
+        projects_menu.setObjectName("projectsMenu")
+
+        new_project_action = QAction("New Project...", self)
+        new_project_action.setObjectName("newProjectAction")
+        new_project_action.triggered.connect(self._new_project_dialog)
+        projects_menu.addAction(new_project_action)
+
+        save_project_action = QAction("Save Project", self)
+        save_project_action.setObjectName("saveProjectAction")
+        save_project_action.triggered.connect(self._save_project_from_menu)
+        projects_menu.addAction(save_project_action)
+
+        self.open_projects_menu = projects_menu.addMenu("Open Project")
+        self.open_projects_menu.setObjectName("openProjectsMenu")
+        self.open_projects_menu.aboutToShow.connect(self._refresh_open_projects_menu)
 
     def _build_layout_menu(self) -> None:
         layout_menu = self.menuBar().addMenu("&Layout")
@@ -366,6 +396,13 @@ class Keyboard75Window(QMainWindow):
         for key in new_layout.keys:
             key.assignment = previous_assignments.get(key.key_id, "NONE")
 
+        self._install_layout(new_layout)
+        self._set_dirty(True)
+        return True
+
+    def _install_layout(self, new_layout: Layout) -> None:
+        """Install an already-copied layout and synchronize its UI/device key set."""
+
         self.selected_key = None
         self.assignment_edit.clear()
         self.assignment_edit.setEnabled(False)
@@ -380,10 +417,12 @@ class Keyboard75Window(QMainWindow):
         old_grid.deleteLater()
         self.layout_banner.setText(self.layout.label)
         self.layout_banner.setVisible(self._layout_is_provisional())
-        self.device.set_key_ids(key.key_id for key in self.layout.keys)
-        self._set_dirty(True)
+        self.device.set_key_ids(
+            (key.key_id for key in self.layout.keys),
+            {key.key_id: key.assignment for key in self.layout.keys},
+        )
+        self._refresh_device_status()
         self._resize_for_layout()
-        return True
 
     def _open_custom_layout_dialog(self) -> None:
         dialog = QDialog(self)
@@ -515,10 +554,13 @@ class Keyboard75Window(QMainWindow):
 
     def _refresh_device_status(self) -> None:
         state = "connected" if self.device.is_connected() else "not connected"
-        self.device_status_label.setText(f"Device: {state} (simulated)")
+        layout_summary = f"{self.layout.name} ({self.layout.key_count} keys)"
+        self.device_status_label.setText(
+            f"Device: {state} (simulated) — {layout_summary}"
+        )
         if hasattr(self, "simulated_device_status_label"):
             self.simulated_device_status_label.setText(
-                f"Device: {state} (simulated)"
+                f"Device: {state} (simulated) — {layout_summary}"
             )
         self.transport_label.setText(
             f"Transport: {self.device.get_transport().upper()}"
@@ -532,11 +574,16 @@ class Keyboard75Window(QMainWindow):
 
     def _refresh_profile_status(self) -> None:
         name = self.current_profile_path.name if self.current_profile_path else "none"
+        project = self.current_project_name or "none"
         unsaved = " — (unsaved)" if self.dirty else ""
-        self.local_profile_status_label.setText(f"Local profile: {name}{unsaved}")
+        if self.current_project_name is None:
+            status = f"Local profile: {name}{unsaved}"
+        else:
+            status = f"Project: {project} — Local profile: {name}{unsaved}"
+        self.local_profile_status_label.setText(status)
         title_unsaved = " (unsaved)" if self.dirty else ""
         self.setWindowTitle(
-            f"Keyboard75 — {self.layout.name} — {name}{title_unsaved}"
+            f"Keyboard75 — {self.layout.name} — {project}{title_unsaved}"
         )
 
     def confirm_unsaved_changes(self) -> bool:
@@ -600,6 +647,13 @@ class Keyboard75Window(QMainWindow):
         return saved_path
 
     def _save_current_profile(self) -> bool:
+        if self.current_project_path is not None:
+            try:
+                self.save_project()
+            except (OSError, ProjectError) as error:
+                QMessageBox.critical(self, "Could not save project", str(error))
+                return False
+            return True
         if self.current_profile_path is None:
             return self._save_profile_dialog()
         try:
@@ -632,6 +686,104 @@ class Keyboard75Window(QMainWindow):
             QMessageBox.critical(self, "Could not save local profile", str(error))
             return False
         return True
+
+    def new_project(
+        self,
+        name: str,
+        directory: str | Path = PROJECTS_DIRECTORY,
+    ) -> Path | None:
+        """Create and activate a clean named project using the current layout."""
+        if not self.confirm_unsaved_changes():
+            return None
+        clean_layout = Layout.from_dict(self.layout.to_dict())
+        for key in clean_layout.keys:
+            key.assignment = "NONE"
+        self._install_layout(clean_layout)
+        self.profile = None
+        self.current_profile_path = None
+        self.current_project_name = name.strip()
+        self.current_project_path = project_path(name, directory)
+        return self.save_project()
+
+    def save_project(self, path: str | Path | None = None) -> Path:
+        """Save the active layout and assignments as a local keyboard project."""
+        if self.current_project_name is None:
+            raise ProjectError("Create or open a project before saving it")
+        target = Path(path) if path is not None else self.current_project_path
+        if target is None:
+            target = project_path(self.current_project_name)
+        assignments = {key.key_id: key.assignment for key in self.layout.keys}
+        document = create_project(
+            self.current_project_name,
+            self.layout,
+            assignments,
+            self.current_profile_path,
+        )
+        saved_path = save_project_file(target, document)
+        self.profile = document
+        self.current_project_path = saved_path
+        self._set_dirty(False)
+        message = f"Saved project to {saved_path}"
+        self.statusBar().showMessage(message, 5000)
+        print(message)
+        return saved_path
+
+    def load_project(self, path: str | Path) -> bool:
+        """Atomically open a project and adopt its layout, assignments, and profile."""
+        if not self.confirm_unsaved_changes():
+            return False
+        loaded = load_project_file(path, fallback_layout=self.layout)
+        self._install_layout(Layout.from_dict(loaded.layout.to_dict()))
+        self.profile = loaded.profile
+        self.current_profile_path = (
+            Path(loaded.profile_path) if loaded.profile_path is not None else None
+        )
+        self.current_project_name = (
+            loaded.name
+            if loaded.name != "Legacy profile"
+            else Path(path).stem.removesuffix(".kb75")
+        )
+        self.current_project_path = Path(path)
+        self._set_dirty(False)
+        return True
+
+    def _new_project_dialog(self) -> None:
+        name, accepted = QInputDialog.getText(self, "New keyboard project", "Name")
+        if not accepted or not name.strip():
+            return
+        try:
+            self.new_project(name)
+        except (OSError, ProjectError) as error:
+            QMessageBox.critical(self, "Could not create project", str(error))
+
+    def _save_project_from_menu(self) -> None:
+        if self.current_project_name is None:
+            self._new_project_dialog()
+            return
+        try:
+            self.save_project()
+        except (OSError, ProjectError) as error:
+            QMessageBox.critical(self, "Could not save project", str(error))
+
+    def _refresh_open_projects_menu(self) -> None:
+        self.open_projects_menu.clear()
+        paths = list_project_files()
+        if not paths:
+            empty_action = self.open_projects_menu.addAction("No saved projects")
+            empty_action.setEnabled(False)
+            return
+        for path in paths:
+            action = self.open_projects_menu.addAction(path.name)
+            action.setData(str(path))
+            action.triggered.connect(
+                lambda _checked=False, selected=path: self._open_project(selected)
+            )
+
+    def _open_project(self, path: str | Path) -> None:
+        try:
+            self.load_project(path)
+        except (OSError, ProjectError) as error:
+            QMessageBox.critical(self, "Could not open project", str(error))
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Protect unsaved local profile changes when closing the window."""

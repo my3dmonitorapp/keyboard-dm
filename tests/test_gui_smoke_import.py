@@ -10,6 +10,7 @@ from desktop_app.app import Keyboard75Window
 from desktop_app.device import SimulatedESP32S3Device
 from desktop_app.layouts import L06, L12, L75, make_custom_layout
 from desktop_app.profile import save_profile
+from desktop_app.project import create_project, save_project
 
 
 def test_window_constructs_with_75_key_widgets() -> None:
@@ -164,4 +165,44 @@ def test_layout_geometry_and_provisional_strip_follow_active_layout() -> None:
     small_window.close()
     large_window.close()
     custom_window.close()
+    application.processEvents()
+
+
+def test_switching_projects_preserves_independent_assignments_and_device_state(
+    tmp_path,
+) -> None:
+    application = QApplication.instance() or QApplication([])
+    first_assignments = {key.key_id: "NONE" for key in L06.keys}
+    second_assignments = {key.key_id: "NONE" for key in L12.keys}
+    first_assignments["K01"] = "A"
+    second_assignments["K01"] = "B"
+    first_path = save_project(
+        tmp_path / "first",
+        create_project("First", L06, first_assignments),
+    )
+    second_path = save_project(
+        tmp_path / "second",
+        create_project("Second", L12, second_assignments),
+    )
+    window = Keyboard75Window(layout=L06)
+    window.connect_device()
+
+    assert window.load_project(first_path)
+    assert window.layout.key_count == 6
+    assert window.layout.keys[0].assignment == "A"
+    assert window.device.get_key_states()["K01"] == "A"
+    assert "L06 (6 keys)" in window.simulated_device_status_label.text()
+
+    assert window.load_project(second_path)
+    assert window.layout.key_count == 12
+    assert window.layout.keys[0].assignment == "B"
+    assert window.device.get_key_states()["K01"] == "B"
+    assert "L12 (12 keys)" in window.simulated_device_status_label.text()
+
+    assert window.load_project(first_path)
+    assert window.layout.keys[0].assignment == "A"
+    assert len(window.key_widgets) == 6
+
+    window.disconnect_device()
+    window.close()
     application.processEvents()

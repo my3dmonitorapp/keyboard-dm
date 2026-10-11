@@ -6,7 +6,7 @@ operations.  It models only the small device API needed by the desktop app.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from .layouts import L75
 from .profile import MAX_ASSIGNMENT_LENGTH
@@ -38,11 +38,20 @@ class SimulatedESP32S3Device:
             key_ids = (key.key_id for key in L75.keys)
         self._key_states = {key_id: "NONE" for key_id in key_ids}
 
-    def set_key_ids(self, key_ids: Iterable[str]) -> None:
-        """Adopt a new key set, preserving states for shared key IDs."""
+    def set_key_ids(
+        self,
+        key_ids: Iterable[str],
+        assignments: Mapping[str, str] | None = None,
+    ) -> None:
+        """Adopt a key set, optionally replacing states from an active project."""
         previous_states = self._key_states
         self._key_states = {
-            key_id: previous_states.get(key_id, "NONE") for key_id in key_ids
+            key_id: (
+                assignments.get(key_id, "NONE")
+                if assignments is not None
+                else previous_states.get(key_id, "NONE")
+            )
+            for key_id in key_ids
         }
 
     def connect(self) -> None:

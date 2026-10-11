@@ -5,6 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .device import SimulatedESP32S3Device
 from .layout_model import Key, Layout, PROVISIONAL_75_LAYOUT
 from .profile import (
     ProfileError,
@@ -31,9 +33,14 @@ from .profile import (
 class Keyboard75Window(QMainWindow):
     """Main window for editing the in-memory provisional key layout."""
 
-    def __init__(self, layout: Layout | None = None) -> None:
+    def __init__(
+        self,
+        layout: Layout | None = None,
+        device: SimulatedESP32S3Device | None = None,
+    ) -> None:
         super().__init__()
         self.layout = layout or Layout.from_dict(PROVISIONAL_75_LAYOUT.to_dict())
+        self.device = device or SimulatedESP32S3Device()
         self.selected_key: Key | None = None
         self.key_widgets: dict[str, QPushButton] = {}
         self.profile: dict[str, object] | None = None
@@ -78,12 +85,31 @@ class Keyboard75Window(QMainWindow):
 
         title = QLabel("Keyboard75 Layout Editor", top_bar)
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        self.device_status_label = QLabel("Device: not connected", top_bar)
+        self.device_status_label = QLabel(top_bar)
         self.device_status_label.setObjectName("deviceStatusLabel")
+        self.transport_label = QLabel(top_bar)
+        self.transport_label.setObjectName("transportLabel")
+
+        self.host_connected_checkbox = QCheckBox("USB host connected", top_bar)
+        self.host_connected_checkbox.setObjectName("hostConnectedCheckbox")
+        self.host_connected_checkbox.toggled.connect(self.set_host_connected)
+
+        self.connect_button = QPushButton("Connect", top_bar)
+        self.connect_button.setObjectName("connectButton")
+        self.connect_button.clicked.connect(self.connect_device)
+
+        self.disconnect_button = QPushButton("Disconnect", top_bar)
+        self.disconnect_button.setObjectName("disconnectButton")
+        self.disconnect_button.clicked.connect(self.disconnect_device)
 
         layout.addWidget(title)
         layout.addStretch()
+        layout.addWidget(self.host_connected_checkbox)
         layout.addWidget(self.device_status_label)
+        layout.addWidget(self.transport_label)
+        layout.addWidget(self.connect_button)
+        layout.addWidget(self.disconnect_button)
+        self._refresh_device_status()
         return top_bar
 
     def _build_provisional_banner(self) -> QLabel:
@@ -188,10 +214,37 @@ class Keyboard75Window(QMainWindow):
         if self.selected_key is None:
             return
 
-        self.selected_key.assignment = self.assignment_edit.text()
+        assignment = self.assignment_edit.text()
+        if self.device.is_connected():
+            self.device.send_key_assignment(self.selected_key.key_id, assignment)
+        self.selected_key.assignment = assignment
         self.key_widgets[self.selected_key.key_id].setText(
             self._button_text(self.selected_key)
         )
+
+    def connect_device(self) -> None:
+        """Connect the simulated device and refresh the top-bar state."""
+        self.device.connect()
+        self._refresh_device_status()
+
+    def disconnect_device(self) -> None:
+        """Disconnect the simulated device and refresh the top-bar state."""
+        self.device.disconnect()
+        self._refresh_device_status()
+
+    def set_host_connected(self, connected: bool) -> None:
+        """Simulate USB host presence and display the auto-selected transport."""
+        self.device.set_host_connected(connected)
+        self._refresh_device_status()
+
+    def _refresh_device_status(self) -> None:
+        state = "connected" if self.device.is_connected() else "not connected"
+        self.device_status_label.setText(f"Device: {state}")
+        self.transport_label.setText(
+            f"Transport: {self.device.get_transport().upper()}"
+        )
+        self.connect_button.setEnabled(not self.device.is_connected())
+        self.disconnect_button.setEnabled(self.device.is_connected())
 
     def load_profile(self, path: str) -> None:
         """Load *path* and update all assignments in the model and UI."""

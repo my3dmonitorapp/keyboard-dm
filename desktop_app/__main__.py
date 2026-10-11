@@ -57,6 +57,8 @@ def _run_smoke_flow(application: object, profile_path: Path) -> None:
             window.selected_key.assignment == "NONE",
             "could not reset K07 before profile reload",
         )
+        # The smoke flow intentionally discards that temporary local edit.
+        window._set_dirty(False)
         window.load_profile(str(profile_path))
         _require(
             window.selected_key.assignment == "A"
@@ -80,6 +82,8 @@ def _run_smoke_flow(application: object, profile_path: Path) -> None:
     finally:
         if window.device.is_connected():
             window.disconnect_device()
+        # Avoid an interactive close prompt in the deterministic smoke runner.
+        window._set_dirty(False)
         window.close()
         application.processEvents()
 

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -40,12 +42,15 @@ class Keyboard75Window(QMainWindow):
     ) -> None:
         super().__init__()
         self.layout = layout or Layout.from_dict(PROVISIONAL_75_LAYOUT.to_dict())
-        self.device = device or SimulatedESP32S3Device()
+        self.device = device or SimulatedESP32S3Device(
+            key.key_id for key in self.layout.keys
+        )
         self.selected_key: Key | None = None
         self.key_widgets: dict[str, QPushButton] = {}
         self.profile: dict[str, object] | None = None
+        self.current_profile_path: Path | None = None
+        self.dirty = False
 
-        self.setWindowTitle("Keyboard75 — PROVISIONAL Layout")
         self.resize(1240, 520)
         self._build_file_menu()
 
@@ -64,19 +69,31 @@ class Keyboard75Window(QMainWindow):
         root_layout.addLayout(content_layout, stretch=1)
 
         self.setCentralWidget(central_widget)
+        self._build_status_bar()
+        self._refresh_profile_status()
 
     def _build_file_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
 
-        open_action = QAction("Open...", self)
+        open_action = QAction("Open Local Profile...", self)
         open_action.setObjectName("openProfileAction")
+        open_action.setToolTip("Open a local JSON profile; this does not read hardware")
         open_action.triggered.connect(self._open_profile_dialog)
         file_menu.addAction(open_action)
 
-        save_action = QAction("Save...", self)
+        save_action = QAction("Save Local Profile...", self)
         save_action.setObjectName("saveProfileAction")
+        save_action.setToolTip("Save local JSON only; this does not write to hardware")
         save_action.triggered.connect(self._save_profile_dialog)
         file_menu.addAction(save_action)
+
+    def _build_status_bar(self) -> None:
+        self.local_profile_status_label = QLabel(self)
+        self.local_profile_status_label.setObjectName("localProfileStatusLabel")
+        self.simulated_device_status_label = QLabel(self)
+        self.simulated_device_status_label.setObjectName("simulatedDeviceStatusLabel")
+        self.statusBar().addPermanentWidget(self.local_profile_status_label, 1)
+        self.statusBar().addPermanentWidget(self.simulated_device_status_label)
 
     def _build_top_bar(self) -> QWidget:
         top_bar = QWidget(self)
@@ -221,6 +238,7 @@ class Keyboard75Window(QMainWindow):
         self.key_widgets[self.selected_key.key_id].setText(
             self._button_text(self.selected_key)
         )
+        self._set_dirty(True)
 
     def connect_device(self) -> None:
         """Connect the simulated device and refresh the top-bar state."""
@@ -239,27 +257,68 @@ class Keyboard75Window(QMainWindow):
 
     def _refresh_device_status(self) -> None:
         state = "connected" if self.device.is_connected() else "not connected"
-        self.device_status_label.setText(f"Device: {state}")
+        self.device_status_label.setText(f"Device: {state} (simulated)")
+        if hasattr(self, "simulated_device_status_label"):
+            self.simulated_device_status_label.setText(
+                f"Device: {state} (simulated)"
+            )
         self.transport_label.setText(
             f"Transport: {self.device.get_transport().upper()}"
         )
         self.connect_button.setEnabled(not self.device.is_connected())
         self.disconnect_button.setEnabled(self.device.is_connected())
 
-    def load_profile(self, path: str) -> None:
-        """Load *path* and update all assignments in the model and UI."""
-        profile = load_profile_file(path)
+    def _set_dirty(self, dirty: bool) -> None:
+        self.dirty = dirty
+        self._refresh_profile_status()
+
+    def _refresh_profile_status(self) -> None:
+        name = self.current_profile_path.name if self.current_profile_path else "none"
+        unsaved = " — (unsaved)" if self.dirty else ""
+        self.local_profile_status_label.setText(f"Local profile: {name}{unsaved}")
+        title_unsaved = " (unsaved)" if self.dirty else ""
+        self.setWindowTitle(f"Keyboard75 — {name}{title_unsaved}")
+
+    def confirm_unsaved_changes(self) -> bool:
+        """Offer to save or discard local edits; return whether to proceed."""
+        if not self.dirty:
+            return True
+
+        choice = QMessageBox.warning(
+            self,
+            "Unsaved local profile changes",
+            "The local profile has unsaved changes. Save them before continuing?\n\n"
+            "Saving a local profile does not write to the simulated device.",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if choice == QMessageBox.StandardButton.Save:
+            return self._save_current_profile()
+        return choice == QMessageBox.StandardButton.Discard
+
+    def load_profile(self, path: str | Path) -> bool:
+        """Load *path* for this layout after guarding unsaved local edits."""
+        if not self.confirm_unsaved_changes():
+            return False
+
+        key_ids = tuple(key.key_id for key in self.layout.keys)
+        profile = load_profile_file(path, key_ids=key_ids)
         assignments = profile["keys"]
         for key in self.layout.keys:
             key.assignment = assignments[key.key_id]["assignment"]
             self.key_widgets[key.key_id].setText(self._button_text(key))
 
         self.profile = profile
+        self.current_profile_path = Path(path)
         if self.selected_key is not None:
             self.assignment_edit.setText(self.selected_key.assignment)
+        self._set_dirty(True)
+        return True
 
-    def save_profile(self, path: str) -> None:
-        """Save all assignments currently held by the layout to *path*."""
+    def save_profile(self, path: str | Path) -> Path:
+        """Save assignments to local JSON only, never to device hardware."""
         assignments = {key.key_id: key.assignment for key in self.layout.keys}
         if self.profile is None:
             profile = create_profile(assignments)
@@ -270,6 +329,25 @@ class Keyboard75Window(QMainWindow):
                 for key_id, assignment in assignments.items()
             }
         self.profile = save_profile_file(path, profile)
+        saved_path = Path(path)
+        if not str(saved_path).endswith(".json"):
+            saved_path = Path(f"{saved_path}.json")
+        self.current_profile_path = saved_path
+        self._set_dirty(False)
+        message = f"Saved to {saved_path}"
+        self.statusBar().showMessage(message, 5000)
+        print(message)
+        return saved_path
+
+    def _save_current_profile(self) -> bool:
+        if self.current_profile_path is None:
+            return self._save_profile_dialog()
+        try:
+            self.save_profile(self.current_profile_path)
+        except (OSError, ProfileError) as error:
+            QMessageBox.critical(self, "Could not save local profile", str(error))
+            return False
+        return True
 
     def _open_profile_dialog(self) -> None:
         path, _selected_filter = QFileDialog.getOpenFileName(
@@ -280,18 +358,27 @@ class Keyboard75Window(QMainWindow):
         try:
             self.load_profile(path)
         except (OSError, ProfileError) as error:
-            QMessageBox.critical(self, "Could not open profile", str(error))
+            QMessageBox.critical(self, "Could not open local profile", str(error))
 
-    def _save_profile_dialog(self) -> None:
+    def _save_profile_dialog(self) -> bool:
         path, _selected_filter = QFileDialog.getSaveFileName(
-            self, "Save Keyboard75 profile", "", "JSON profiles (*.json)"
+            self, "Save local Keyboard75 profile", "", "JSON profiles (*.json)"
         )
         if not path:
-            return
+            return False
         try:
             self.save_profile(path)
         except (OSError, ProfileError) as error:
-            QMessageBox.critical(self, "Could not save profile", str(error))
+            QMessageBox.critical(self, "Could not save local profile", str(error))
+            return False
+        return True
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """Protect unsaved local profile changes when closing the window."""
+        if self.confirm_unsaved_changes():
+            event.accept()
+        else:
+            event.ignore()
 
 
 # A concise alias is useful to callers embedding the window.

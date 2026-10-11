@@ -47,6 +47,16 @@ def test_assignment_round_trip_returns_a_copy() -> None:
     assert device.get_key_states()["K07"] == "A"
 
 
+def test_device_adopts_new_key_set_and_preserves_shared_states() -> None:
+    device = SimulatedESP32S3Device(("K01", "K02"))
+    device.connect()
+    device.send_key_assignment("K02", "B")
+
+    device.set_key_ids(("K01", "K02", "K03"))
+
+    assert device.get_key_states() == {"K01": "NONE", "K02": "B", "K03": "NONE"}
+
+
 @pytest.mark.parametrize("key_id", ["K00", "K76", "K7", "not-a-key"])
 def test_invalid_key_is_rejected(key_id: str) -> None:
     device = SimulatedESP32S3Device()

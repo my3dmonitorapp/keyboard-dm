@@ -6,7 +6,10 @@ operations.  It models only the small device API needed by the desktop app.
 
 from __future__ import annotations
 
-from .profile import KEY_IDS, MAX_ASSIGNMENT_LENGTH
+from collections.abc import Iterable
+
+from .layouts import L75
+from .profile import MAX_ASSIGNMENT_LENGTH
 
 
 class DeviceConnectionError(RuntimeError):
@@ -27,11 +30,20 @@ class SimulatedESP32S3Device:
     :class:`DeviceConnectionError`.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, key_ids: Iterable[str] | None = None) -> None:
         self._connected = False
         self._host_connected = False
         self._transport = "ble"
-        self._key_states = {key_id: "NONE" for key_id in KEY_IDS}
+        if key_ids is None:
+            key_ids = (key.key_id for key in L75.keys)
+        self._key_states = {key_id: "NONE" for key_id in key_ids}
+
+    def set_key_ids(self, key_ids: Iterable[str]) -> None:
+        """Adopt a new key set, preserving states for shared key IDs."""
+        previous_states = self._key_states
+        self._key_states = {
+            key_id: previous_states.get(key_id, "NONE") for key_id in key_ids
+        }
 
     def connect(self) -> None:
         """Connect the deterministic in-memory device."""
@@ -65,7 +77,7 @@ class SimulatedESP32S3Device:
     def send_key_assignment(self, key_id: str, assignment: str) -> None:
         """Store one assignment after validating the key and assignment value."""
         if key_id not in self._key_states:
-            raise ValueError(f"Unknown key ID {key_id!r}; expected K01 through K75")
+            raise ValueError(f"Unknown key ID {key_id!r} for the simulated device")
         if not isinstance(assignment, str):
             raise TypeError("Assignment must be a string")
         if len(assignment) > MAX_ASSIGNMENT_LENGTH:

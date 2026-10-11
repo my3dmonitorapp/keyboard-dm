@@ -1,4 +1,4 @@
-"""PySide6 user interface for the provisional Keyboard75 layout."""
+"""PySide6 user interface for configurable keyboard layouts."""
 
 from __future__ import annotations
 
@@ -8,7 +8,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -18,12 +21,14 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from .device import SimulatedESP32S3Device
-from .layout_model import Key, Layout, PROVISIONAL_75_LAYOUT
+from .layout_model import Key, Layout
+from .layouts import BUILT_IN_LAYOUTS, L75, make_custom_layout
 from .profile import (
     ProfileError,
     create_profile,
@@ -33,7 +38,7 @@ from .profile import (
 
 
 class Keyboard75Window(QMainWindow):
-    """Main window for editing the in-memory provisional key layout."""
+    """Main window for editing an in-memory keyboard layout."""
 
     def __init__(
         self,
@@ -41,10 +46,12 @@ class Keyboard75Window(QMainWindow):
         device: SimulatedESP32S3Device | None = None,
     ) -> None:
         super().__init__()
-        self.layout = layout or Layout.from_dict(PROVISIONAL_75_LAYOUT.to_dict())
+        self.layout = Layout.from_dict((layout or L75).to_dict())
         self.device = device or SimulatedESP32S3Device(
             key.key_id for key in self.layout.keys
         )
+        if device is not None:
+            self.device.set_key_ids(key.key_id for key in self.layout.keys)
         self.selected_key: Key | None = None
         self.key_widgets: dict[str, QPushButton] = {}
         self.profile: dict[str, object] | None = None
@@ -53,6 +60,7 @@ class Keyboard75Window(QMainWindow):
 
         self.resize(1240, 520)
         self._build_file_menu()
+        self._build_layout_menu()
 
         central_widget = QWidget(self)
         root_layout = QVBoxLayout(central_widget)
@@ -60,13 +68,15 @@ class Keyboard75Window(QMainWindow):
         root_layout.setSpacing(12)
 
         root_layout.addWidget(self._build_top_bar())
-        root_layout.addWidget(self._build_provisional_banner())
+        self.layout_banner = self._build_provisional_banner()
+        root_layout.addWidget(self.layout_banner)
 
-        content_layout = QHBoxLayout()
-        content_layout.setSpacing(16)
-        content_layout.addWidget(self._build_key_grid(), stretch=1)
-        content_layout.addWidget(self._build_inspector())
-        root_layout.addLayout(content_layout, stretch=1)
+        self.content_layout = QHBoxLayout()
+        self.content_layout.setSpacing(16)
+        self.key_grid_container = self._build_key_grid()
+        self.content_layout.addWidget(self.key_grid_container, stretch=1)
+        self.content_layout.addWidget(self._build_inspector())
+        root_layout.addLayout(self.content_layout, stretch=1)
 
         self.setCentralWidget(central_widget)
         self._build_status_bar()
@@ -86,6 +96,24 @@ class Keyboard75Window(QMainWindow):
         save_action.setToolTip("Save local JSON only; this does not write to hardware")
         save_action.triggered.connect(self._save_profile_dialog)
         file_menu.addAction(save_action)
+
+    def _build_layout_menu(self) -> None:
+        layout_menu = self.menuBar().addMenu("&Layout")
+        layout_menu.setObjectName("layoutMenu")
+        for built_in in BUILT_IN_LAYOUTS:
+            action = QAction(
+                f"{built_in.name} ({built_in.key_count} keys)", self
+            )
+            action.setObjectName(f"layoutAction_{built_in.name}")
+            action.triggered.connect(
+                lambda _checked=False, selected=built_in: self.switch_layout(selected)
+            )
+            layout_menu.addAction(action)
+        layout_menu.addSeparator()
+        custom_action = QAction("Custom...", self)
+        custom_action.setObjectName("customLayoutAction")
+        custom_action.triggered.connect(self._open_custom_layout_dialog)
+        layout_menu.addAction(custom_action)
 
     def _build_status_bar(self) -> None:
         self.local_profile_status_label = QLabel(self)
@@ -130,7 +158,7 @@ class Keyboard75Window(QMainWindow):
         return top_bar
 
     def _build_provisional_banner(self) -> QLabel:
-        banner = QLabel("PROVISIONAL — physical key arrangement is not final", self)
+        banner = QLabel(self.layout.label, self)
         banner.setObjectName("provisionalBanner")
         banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
         banner.setStyleSheet(
@@ -141,6 +169,7 @@ class Keyboard75Window(QMainWindow):
 
     def _build_key_grid(self) -> QWidget:
         grid_container = QWidget(self)
+        self.key_widgets = {}
         grid = QGridLayout(grid_container)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(5)
@@ -169,6 +198,78 @@ class Keyboard75Window(QMainWindow):
             self.key_widgets[key.key_id] = button
 
         return grid_container
+
+    def switch_layout(self, layout: Layout) -> bool:
+        """Switch to a copy of *layout* while retaining shared assignments."""
+        if not self.confirm_unsaved_changes():
+            return False
+
+        previous_assignments = {
+            key.key_id: key.assignment for key in self.layout.keys
+        }
+        new_layout = Layout.from_dict(layout.to_dict())
+        for key in new_layout.keys:
+            key.assignment = previous_assignments.get(key.key_id, "NONE")
+
+        self.selected_key = None
+        self.assignment_edit.clear()
+        self.assignment_edit.setEnabled(False)
+        self.apply_button.setEnabled(False)
+        self.inspector_key_id.setText("Key ID: Select a key")
+        self.inspector_position.setText("Position: —")
+
+        old_grid = self.key_grid_container
+        self.layout = new_layout
+        self.key_grid_container = self._build_key_grid()
+        self.content_layout.replaceWidget(old_grid, self.key_grid_container)
+        old_grid.deleteLater()
+        self.layout_banner.setText(self.layout.label)
+        self.device.set_key_ids(key.key_id for key in self.layout.keys)
+        self._set_dirty(True)
+        return True
+
+    def _open_custom_layout_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Custom layout")
+        form = QFormLayout(dialog)
+
+        count_input = QSpinBox(dialog)
+        count_input.setObjectName("customKeyCountInput")
+        count_input.setRange(2, 500)
+        count_input.setValue(self.layout.key_count)
+        form.addRow("Key count", count_input)
+
+        cols_input = QSpinBox(dialog)
+        cols_input.setObjectName("customColsInput")
+        cols_input.setRange(0, 500)
+        cols_input.setSpecialValueText("Auto")
+        form.addRow("Columns (optional)", cols_input)
+
+        rows_input = QSpinBox(dialog)
+        rows_input.setObjectName("customRowsInput")
+        rows_input.setRange(0, 500)
+        rows_input.setSpecialValueText("Auto")
+        form.addRow("Rows (optional)", rows_input)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        cols = cols_input.value() or None
+        rows = rows_input.value() or None
+        try:
+            custom_layout = make_custom_layout(count_input.value(), cols, rows)
+        except ValueError as error:
+            QMessageBox.critical(self, "Could not create custom layout", str(error))
+            return
+        self.switch_layout(custom_layout)
 
     def _build_inspector(self) -> QWidget:
         inspector = QFrame(self)

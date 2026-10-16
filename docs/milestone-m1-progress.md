@@ -10,6 +10,9 @@ Budget: 8 Codex tasks (0 used), 2 corrections/task, 90 min (0 min used). Start 2
 - [x] M1-T5 — done (202 tests) persistence v3 (lossless save/reload, v2 migration)
 - [x] M1-T6 — done (205 tests) matrix press/release simulation + keycap highlight
 - [x] M1-T7 — done (206 tests, smoke green) integration sweep + docs + full regression
+- [x] M1.1-A — per-key visual position + width set (211 tests)
+- [x] M1.1-B — ESP32 GPIO safety validation
+- [x] M1.1-C — key inspector discoverability
 - [ ] M1-T8 reserve
 
 Log:

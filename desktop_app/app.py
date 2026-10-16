@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent
@@ -413,6 +413,183 @@ class MatrixSetupDialog(QDialog):
         )
 
 
+class MatrixPinmapDialog(QDialog):
+    """Live GPIO assignment editor backed directly by a ``MatrixConfig``."""
+
+    def __init__(
+        self,
+        config: MatrixConfig,
+        parent: QWidget | None = None,
+        changed: Callable[[], None] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("matrixPinmapDialog")
+        self.setWindowTitle("Matrix GPIO pinmap")
+        self.config = config
+        self._changed = changed
+        self.row_pin_inputs: list[QLineEdit] = []
+        self.column_pin_inputs: list[QLineEdit] = []
+        self.validation_errors: list[str] = []
+
+        root = QVBoxLayout(self)
+        help_label = QLabel(
+            "Assign one GPIO pin to each matrix line. Leave a field blank or use "
+            "- for an unassigned line.",
+            self,
+        )
+        help_label.setWordWrap(True)
+        root.addWidget(help_label)
+
+        range_layout = QHBoxLayout()
+        self.min_pin_input = QSpinBox(self)
+        self.min_pin_input.setObjectName("matrixMinPinInput")
+        self.min_pin_input.setRange(-99999, 99999)
+        self.min_pin_input.setValue(config.min_pin)
+        self.max_pin_input = QSpinBox(self)
+        self.max_pin_input.setObjectName("matrixMaxPinInput")
+        self.max_pin_input.setRange(-99999, 99999)
+        self.max_pin_input.setValue(config.max_pin)
+        range_layout.addWidget(QLabel("Allowed GPIO range", self))
+        range_layout.addWidget(self.min_pin_input)
+        range_layout.addWidget(QLabel("to", self))
+        range_layout.addWidget(self.max_pin_input)
+        range_layout.addStretch()
+        root.addLayout(range_layout)
+
+        grid_widget = QWidget(self)
+        grid_widget.setObjectName("matrixPinmapGrid")
+        grid = QGridLayout(grid_widget)
+        grid.addWidget(QLabel("Matrix line", grid_widget), 0, 0)
+        grid.addWidget(QLabel("GPIO pin", grid_widget), 0, 1)
+        grid_row = 1
+        for index, pin in enumerate(config.row_pins):
+            editor = self._make_pin_editor("row", index, pin, grid_widget)
+            self.row_pin_inputs.append(editor)
+            grid.addWidget(QLabel(f"Row {index}", grid_widget), grid_row, 0)
+            grid.addWidget(editor, grid_row, 1)
+            grid_row += 1
+        for index, pin in enumerate(config.column_pins):
+            editor = self._make_pin_editor("column", index, pin, grid_widget)
+            self.column_pin_inputs.append(editor)
+            grid.addWidget(QLabel(f"Column {index}", grid_widget), grid_row, 0)
+            grid.addWidget(editor, grid_row, 1)
+            grid_row += 1
+
+        scroll = QScrollArea(self)
+        scroll.setObjectName("matrixPinmapScrollArea")
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(grid_widget)
+        root.addWidget(scroll, stretch=1)
+
+        action_layout = QHBoxLayout()
+        self.suggest_button = QPushButton("Suggest pins", self)
+        self.suggest_button.setObjectName("matrixPinmapSuggestButton")
+        self.clear_button = QPushButton("Clear pins", self)
+        self.clear_button.setObjectName("matrixPinmapClearButton")
+        action_layout.addWidget(self.suggest_button)
+        action_layout.addWidget(self.clear_button)
+        action_layout.addStretch()
+        root.addLayout(action_layout)
+
+        self.status_label = QLabel(self)
+        self.status_label.setObjectName("matrixPinmapStatusLabel")
+        self.status_label.setWordWrap(True)
+        root.addWidget(self.status_label)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+        self.min_pin_input.valueChanged.connect(self._pin_range_changed)
+        self.max_pin_input.valueChanged.connect(self._pin_range_changed)
+        self.suggest_button.clicked.connect(self.suggest_pins)
+        self.clear_button.clicked.connect(self.clear_pins)
+        self.refresh_validation()
+        self.resize(430, 520)
+
+    def _make_pin_editor(
+        self, kind: str, index: int, pin: Any, parent: QWidget
+    ) -> QLineEdit:
+        editor = QLineEdit(parent)
+        title_kind = "Row" if kind == "row" else "Column"
+        editor.setObjectName(f"matrix{title_kind}Pin_{index}")
+        editor.setPlaceholderText("-")
+        editor.setText("" if pin is None else str(pin))
+        editor.textChanged.connect(
+            lambda text, line_kind=kind, line_index=index: self._pin_changed(
+                line_kind, line_index, text
+            )
+        )
+        return editor
+
+    @staticmethod
+    def _pin_value(text: str) -> int | None | str:
+        stripped = text.strip()
+        if not stripped or stripped == "-":
+            return None
+        try:
+            return int(stripped)
+        except ValueError:
+            return stripped
+
+    def _pin_changed(self, kind: str, index: int, text: str) -> None:
+        pins = self.config.row_pins if kind == "row" else self.config.column_pins
+        pins[index] = self._pin_value(text)  # type: ignore[assignment]
+        self._notify_changed()
+
+    def _pin_range_changed(self) -> None:
+        self.config.min_pin = self.min_pin_input.value()
+        self.config.max_pin = self.max_pin_input.value()
+        self._notify_changed()
+
+    def _notify_changed(self) -> None:
+        self.refresh_validation()
+        if self._changed is not None:
+            self._changed()
+
+    def refresh_validation(self) -> bool:
+        """Render model validation without changing the entered state."""
+        ok, errors = self.config.validate()
+        self.validation_errors = errors
+        self.status_label.setProperty("valid", ok)
+        if ok:
+            self.status_label.setText("Pinmap valid")
+            self.status_label.setStyleSheet("color: #79c98b;")
+        else:
+            self.status_label.setText("Invalid pinmap:\n" + "\n".join(errors))
+            self.status_label.setStyleSheet("color: #ef7777;")
+        return ok
+
+    def _show_model_pins(self) -> None:
+        for editor, pin in zip(self.row_pin_inputs, self.config.row_pins):
+            editor.blockSignals(True)
+            editor.setText("" if pin is None else str(pin))
+            editor.blockSignals(False)
+        for editor, pin in zip(self.column_pin_inputs, self.config.column_pins):
+            editor.blockSignals(True)
+            editor.setText("" if pin is None else str(pin))
+            editor.blockSignals(False)
+
+    def clear_pins(self) -> None:
+        """Clear every row and column assignment."""
+        self.config.row_pins[:] = [None] * self.config.rows
+        self.config.column_pins[:] = [None] * self.config.cols
+        self._show_model_pins()
+        self._notify_changed()
+
+    def suggest_pins(self) -> None:
+        """Assign distinct in-range pins in row-first, column-second order."""
+        available = iter(range(self.config.min_pin, self.config.max_pin + 1))
+        assignments = [
+            next(available, None)
+            for _ in range(self.config.rows + self.config.cols)
+        ]
+        self.config.row_pins[:] = assignments[: self.config.rows]
+        self.config.column_pins[:] = assignments[self.config.rows :]
+        self._show_model_pins()
+        self._notify_changed()
+
+
 class Keyboard75Window(QMainWindow):
     """Main window for editing an in-memory keyboard layout."""
 
@@ -440,6 +617,7 @@ class Keyboard75Window(QMainWindow):
         self.matrix_config: MatrixConfig | None = None
         self.matrix_layout: Layout | None = None
         self.matrix_setup_dialog: MatrixSetupDialog | None = None
+        self.matrix_pinmap_dialog: MatrixPinmapDialog | None = None
         self.dirty = False
         self._compatibility_clear_requested = False
         self._loading_matrix_editor = False
@@ -530,6 +708,12 @@ class Keyboard75Window(QMainWindow):
         self.saved_matrix_action.setEnabled(False)
         self.saved_matrix_action.triggered.connect(self.switch_to_matrix_layout)
         layout_menu.addAction(self.saved_matrix_action)
+
+        self.matrix_pinmap_action = QAction("GPIO pinmap...", self)
+        self.matrix_pinmap_action.setObjectName("matrixPinmapAction")
+        self.matrix_pinmap_action.setEnabled(False)
+        self.matrix_pinmap_action.triggered.connect(self.open_matrix_pinmap)
+        layout_menu.addAction(self.matrix_pinmap_action)
 
     def _build_status_bar(self) -> None:
         self.local_profile_status_label = QLabel(self)
@@ -686,6 +870,9 @@ class Keyboard75Window(QMainWindow):
 
         old_grid = self.key_grid_container
         self.layout = new_layout
+        self.matrix_pinmap_action.setEnabled(
+            self.layout.label == "matrix" and self.matrix_config is not None
+        )
         self.key_grid_container = self._build_key_grid()
         self.content_layout.replaceWidget(old_grid, self.key_grid_container)
         old_grid.deleteLater()
@@ -767,6 +954,18 @@ class Keyboard75Window(QMainWindow):
         self.matrix_config = MatrixConfig.from_dict(config.to_dict())
         self.matrix_layout = Layout.from_dict(self.layout.to_dict())
         self.saved_matrix_action.setEnabled(True)
+        self.matrix_pinmap_action.setEnabled(True)
+
+    def open_matrix_pinmap(self) -> MatrixPinmapDialog | None:
+        """Open the GPIO editor for the active generated matrix."""
+        if self.layout.label != "matrix" or self.matrix_config is None:
+            return None
+        dialog = MatrixPinmapDialog(
+            self.matrix_config, self, changed=lambda: self._set_dirty(True)
+        )
+        self.matrix_pinmap_dialog = dialog
+        dialog.exec()
+        return dialog
 
     def switch_to_matrix_layout(self) -> bool:
         """Activate the last generated matrix without reopening its editor."""

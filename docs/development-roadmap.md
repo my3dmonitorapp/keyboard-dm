@@ -1,6 +1,6 @@
 # Keyboard DM Development Roadmap
 
-Date: 2026-10-11  
+Date: 2026-10-16
 Primary target MCU: standard ESP32 (ESP32-WROOM-32 class, part **TBD**)
 
 ## 1. Roadmap rules
@@ -16,7 +16,7 @@ Primary target MCU: standard ESP32 (ESP32-WROOM-32 class, part **TBD**)
 
 ### Track A — Desktop application
 
-Status: **S1.2 complete (2026-10-11)**
+Status: **M1 implementation complete on feature branch; pending review/merge (2026-10-16)**
 
 Track A runs independently against a deterministic simulated device until verified hardware is available. Existing simulated-device class/UI naming that refers to ESP32-S3 is retained as a documentation-only milestone follow-up; no code rename is authorized here. The provisional layout remains clearly labeled and does not define final key placement or firmware wiring.
 
@@ -46,7 +46,16 @@ Milestone S1.2 delivered:
 - A compact typed GUI action editor and structured simulated-device round-trips.
 - Verification coverage for the S1.2 action matrix while retaining S1/S1.1 layout, project, mismatch, and unsaved-change behavior.
 
-Track A milestones after S1.2 remain **TBD** and must not assume unresolved physical layout, wiring, or GPIO decisions. Macro/layer behavior and real BLE HID/USB-serial device transport are not implemented; firmware remains gated below. The S1.2 typed actions and profile v2 format are preserved as board-agnostic interfaces.
+Milestone M1 delivered on `feature/matrix-layout-editor`:
+
+- Configurable 1–32 by 1–128 electrical matrices with sparse switch cells, stable matrix key IDs, and automatic visual-layout generation.
+- Per-key half-unit widths, labels, and movement between empty matrix cells.
+- Independent row/column pin data with configurable range and duplicate-pin validation; these are local project values, not verified hardware GPIO assignments.
+- Project schema version 3 persistence for complete matrix state and existing typed assignments, while retaining legacy project loading.
+- Deterministic matrix press/release simulation, visual highlighting, and an extended offscreen integration smoke flow.
+- Final M1 regression coverage: 206 tests passing before review/merge.
+
+Track A work after M1 remains **TBD**. Macro/layer behavior and real BLE HID/USB-serial device transport are not implemented; firmware remains gated below. The typed actions and local project formats remain board-agnostic interfaces, and M1 does not resolve physical layout, wiring, diode, or GPIO decisions.
 
 ### Track B — ESP32 (standard) BLE HID + USB-serial-config firmware
 

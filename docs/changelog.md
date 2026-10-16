@@ -1,5 +1,13 @@
 # Documentation Changelog
 
+## 2026-10-16 — Desktop application Milestone M1
+
+- T1–T2: Added the validated sparse `MatrixConfig` model, stable matrix key IDs, GUI matrix setup, and automatic layout generation for configurable row/column dimensions.
+- T3–T4: Added per-key width, label, and cell movement plus independent row/column pin editing with live range and conflict validation.
+- T5–T6: Added lossless project schema version 3 matrix persistence and deterministic matrix press/release simulation with visual key highlighting.
+- T7: Extended the offscreen smoke entrypoint across 3×4 and sparse 5×15 examples, typed shortcut/modifier/media actions, v3 save/reload, and simulated press state; refreshed the matrix documentation and completed a 206-test regression.
+- Deliverable state: M1 desktop implementation is complete on `feature/matrix-layout-editor` and pending review/merge. No firmware, hardware access, or verified physical GPIO allocation is included.
+
 ## 2026-10-11 — BD-1 Bluetooth-first standard-ESP32 planning baseline
 
 - Adopted [BD-1](hardware-decision-2026-10-11-bt-first.md): the primary target is now a standard ESP32 (preferably an ESP32-WROOM-32 DevKit-class or similar economical board; exact part **TBD**) with BLE HID as the primary keyboard transport.

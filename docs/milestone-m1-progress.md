@@ -8,7 +8,7 @@ Budget: 8 Codex tasks (0 used), 2 corrections/task, 90 min (0 min used). Start 2
 - [x] M1-T3 — done (193 tests) per-key editing (width/position/label)
 - [x] M1-T4 — done (196 tests) GPIO pinmap UI + live validation
 - [x] M1-T5 — done (202 tests) persistence v3 (lossless save/reload, v2 migration)
-- [ ] M1-T6 matrix press/release simulation + keycap highlight
+- [x] M1-T6 — done (205 tests) matrix press/release simulation + keycap highlight
 - [ ] M1-T7 integration sweep + docs + full regression
 - [ ] M1-T8 reserve
 
@@ -19,3 +19,4 @@ Log:
 - 2026-10-16: T3 verified + committed (c9ad7ec). Budget: 3/8 tasks.
 - 2026-10-16: T4 verified + committed (d9b50d1). Budget: 4/8 tasks.
 - 2026-10-16: T5 verified (independent 70-key 5x15 save/load round-trip, 3 typed action types preserved) + committed (4d9b6e8). Budget: 5/8 tasks.
+- 2026-10-16: T6 verified (independent device press/release + empty-cell rejection) + committed (a96809e). Budget: 6/8 tasks.

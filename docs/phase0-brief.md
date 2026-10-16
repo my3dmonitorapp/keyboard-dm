@@ -1,4 +1,4 @@
-# Phase 0 Brief — Keyboard75: ESP32-S3 Architecture Confirmation (2026-10-11)
+# Phase 0 Brief — Keyboard DM: ESP32-S3 Architecture Confirmation (2026-10-11)
 
 Status: Confirmed by owner. Supersedes the previously planned standard ESP32.
 Scope: PLANNING DOCUMENTS ONLY. No firmware, no GPIO assumptions.

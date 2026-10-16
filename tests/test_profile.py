@@ -1,4 +1,4 @@
-"""Tests for the frozen Keyboard75 JSON profile format."""
+"""Tests for the frozen Keyboard DM JSON profile format."""
 
 import json
 
@@ -30,7 +30,7 @@ def _assignments() -> dict[str, str]:
 
 
 def test_profile_round_trip_refreshes_updated_timestamp(tmp_path) -> None:
-    path = tmp_path / "/project.json"
+    path = tmp_path / "project.json"
     save_profile(path, _assignments())
     profile = load_profile(path)
     profile["updated"] = "2000-01-01T00:00:00+00:00"

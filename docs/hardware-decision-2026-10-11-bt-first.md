@@ -1,4 +1,4 @@
-# Keyboard75 Hardware Decision: Bluetooth-First, Standard ESP32
+# Keyboard DM Hardware Decision: Bluetooth-First, Standard ESP32
 
 Date: 2026-10-11
 Status: **Supersedes the earlier "ESP32-S3 sole target / native-USB-HID-required" baseline**

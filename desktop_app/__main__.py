@@ -152,7 +152,7 @@ def run_smoke() -> int:
         from PySide6.QtWidgets import QApplication
 
         application = QApplication.instance() or QApplication([sys.argv[0]])
-        with tempfile.TemporaryDirectory(prefix="/project-smoke-") as temp_dir:
+        with tempfile.TemporaryDirectory(prefix="kb-dm-smoke-") as temp_dir:
             _run_smoke_flow(application, Path(temp_dir) / "smoke-profile.json")
     except Exception as error:
         print(f"Keyboard DM smoke test FAILED: {error}", file=sys.stderr)

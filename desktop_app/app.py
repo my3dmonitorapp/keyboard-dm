@@ -237,6 +237,15 @@ QPushButton:checked {
 QPushButton:checked:hover {
     background-color: #315c79;
 }
+QPushButton[devicePressed="true"] {
+    background-color: #8a4f16;
+    color: #ffffff;
+    border-color: #ffc36b;
+    border-bottom-color: #b66e25;
+}
+QPushButton[devicePressed="true"]:hover {
+    background-color: #9b5b1c;
+}
 """
 
 
@@ -608,6 +617,7 @@ class Keyboard75Window(QMainWindow):
         )
         if device is not None:
             self.device.set_key_ids(key.key_id for key in self.layout.keys)
+        self.device.add_pressed_state_listener(self.refresh_pressed_key_highlights)
         self.selected_key: Key | None = None
         self.key_widgets: dict[str, QPushButton] = {}
         self.profile: dict[str, object] | None = None
@@ -885,6 +895,10 @@ class Keyboard75Window(QMainWindow):
                 for key in self.layout.keys
             },
         )
+        self.device.set_matrix_config(
+            self.matrix_config if self.layout.label == "matrix" else None
+        )
+        self.refresh_pressed_key_highlights()
         self._refresh_device_status()
         self._resize_for_layout()
 
@@ -1197,6 +1211,17 @@ class Keyboard75Window(QMainWindow):
         label_length = max(len(key.label or key.key_id), len(assignment_label or ""))
         font.setPointSize(7 if label_length > 12 else 8 if label_length > 8 else 9)
         button.setFont(font)
+
+    def refresh_pressed_key_highlights(self) -> None:
+        """Apply simulated device press state to the matching visible keycaps."""
+        pressed_key_ids = self.device.get_pressed_key_ids()
+        for key_id, button in self.key_widgets.items():
+            pressed = key_id in pressed_key_ids
+            button.setProperty("devicePressed", pressed)
+            button.setDown(pressed)
+            button.style().unpolish(button)
+            button.style().polish(button)
+            button.update()
 
     def _selected_matrix_cell(self) -> tuple[int, int] | None:
         if (

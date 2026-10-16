@@ -73,8 +73,13 @@ def test_matrix_project_round_trip_preserves_config_and_typed_actions(tmp_path):
     assert loaded.assignments["MX-02-02"] == MediaAction("play_pause").to_json()
 
 
-def test_matrix_project_two_round_trips_are_idempotent(tmp_path):
+def test_full_matrix_save_load_save_reload_has_zero_semantic_change(tmp_path):
     config, document = _matrix_document()
+    expected_matrix = config.to_dict()
+    expected_layout = document["layout"]
+    expected_assignments = {
+        key_id: key_data["assignment"] for key_id, key_data in document["keys"].items()
+    }
     first = load_project(save_project(tmp_path / "first", document))
 
     second_document = create_project(
@@ -86,9 +91,19 @@ def test_matrix_project_two_round_trips_are_idempotent(tmp_path):
     )
     second = load_project(save_project(tmp_path / "second", second_document))
 
-    assert second.matrix_config == config == first.matrix_config
-    assert second.layout.to_dict() == first.layout.to_dict()
-    assert second.assignments == first.assignments
+    assert first.matrix_config is not None
+    assert second.matrix_config is not None
+    assert first.matrix_config.to_dict() == expected_matrix
+    assert second.matrix_config.to_dict() == expected_matrix
+    assert first.layout.to_dict() == second.layout.to_dict()
+    assert first.layout.to_dict() == {
+        **expected_layout,
+        "keys": [
+            {**key, "assignment": expected_assignments[key["key_id"]]}
+            for key in expected_layout["keys"]
+        ],
+    }
+    assert first.assignments == second.assignments == expected_assignments
 
 
 def test_pre_change_v3_matrix_defaults_to_computed_geometry(tmp_path):
@@ -144,6 +159,7 @@ def test_preexisting_non_matrix_project_loads_without_field_loss(
 
     migrated = load_project(save_project(tmp_path / "migrated", document))
     assert migrated.matrix_config is None
+    assert migrated.layout.to_dict() == loaded.layout.to_dict()
     assert migrated.assignments == loaded.assignments
     migrated_document = json.loads(
         (tmp_path / "migrated.kb75.json").read_text(encoding="utf-8")

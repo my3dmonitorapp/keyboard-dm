@@ -34,6 +34,50 @@ def _choose_width(window: Keyboard75Window, half_units: int) -> None:
     window.matrix_width_input.setCurrentIndex(index)
 
 
+def test_selected_matrix_key_inspector_is_visible_and_identifies_cell(
+    matrix_window,
+) -> None:
+    assert not matrix_window.matrix_key_panel.isHidden()
+    assert matrix_window.matrix_selected_key_label.text() == (
+        "Selected matrix key: MX-00-00"
+    )
+    assert matrix_window.matrix_selected_cell_label.text() == (
+        "Grid cell: row 0, column 0"
+    )
+    assert matrix_window.matrix_width_input.objectName() == "matrixKeyWidthCombo"
+    assert matrix_window.matrix_dx_input.objectName() == (
+        "matrixKeyVisualXOffsetInput"
+    )
+    assert matrix_window.matrix_dy_input.objectName() == (
+        "matrixKeyVisualYOffsetInput"
+    )
+
+
+def test_reset_selected_matrix_key_appearance_preserves_identity_and_action(
+    matrix_window,
+) -> None:
+    shortcut = ShortcutAction(("lctrl",), "c").to_json()
+    matrix_window.selected_key.assignment = shortcut
+    _choose_width(matrix_window, 4)
+    matrix_window.matrix_label_input.setText("Copy")
+    matrix_window.matrix_dx_input.setValue(3)
+    matrix_window.matrix_dy_input.setValue(-1)
+    assert matrix_window.apply_selected_matrix_visual_offset()
+
+    assert matrix_window.reset_selected_matrix_key_appearance()
+
+    assert matrix_window.selected_key.key_id == "MX-00-00"
+    assert matrix_window.selected_key.assignment == shortcut
+    assert (0, 0) in matrix_window.matrix_config.switches
+    assert (0, 0) not in matrix_window.matrix_config.key_widths
+    assert (0, 0) not in matrix_window.matrix_config.key_labels
+    assert (0, 0) not in matrix_window.matrix_config.key_visual_offsets
+    assert matrix_window.matrix_width_input.currentData() == 2
+    assert matrix_window.matrix_label_input.text() == ""
+    assert matrix_window.matrix_dx_input.value() == 0
+    assert matrix_window.matrix_dy_input.value() == 0
+
+
 def test_matrix_key_width_and_label_update_layout_and_visual(matrix_window) -> None:
     key_id = matrix_window.selected_key.key_id
     original_width = matrix_window.key_widgets[key_id].width()

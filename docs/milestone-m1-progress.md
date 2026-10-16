@@ -10,9 +10,9 @@ Budget: 8 Codex tasks (0 used), 2 corrections/task, 90 min (0 min used). Start 2
 - [x] M1-T5 — done (202 tests) persistence v3 (lossless save/reload, v2 migration)
 - [x] M1-T6 — done (205 tests) matrix press/release simulation + keycap highlight
 - [x] M1-T7 — done (206 tests, smoke green) integration sweep + docs + full regression
-- [x] M1.1-A — per-key visual position + width set (211 tests)
-- [x] M1.1-B — ESP32 GPIO safety validation
-- [x] M1.1-C — key inspector discoverability
+- [x] M1.1-A — done (211 tests) per-key visual offsets, complete width presets, occlusion-aware rendering
+- [x] M1.1-B — done (233 tests) ESP32 GPIO safety validation and safe pin suggestions
+- [x] M1.1-C — done (235 tests, smoke green) key inspector discoverability + final integration regression
 - [ ] M1-T8 reserve
 
 Log:
@@ -25,3 +25,13 @@ Log:
 - 2026-10-16: T6 verified (independent device press/release + empty-cell rejection) + committed (a96809e). Budget: 6/8 tasks.
 - 2026-10-16: T7 verified (independent --smoke exit 0 + 206 tests) + committed ($(git rev-parse --short HEAD)). Budget: 7/8; 1 reserve held unused.
 - 2026-10-16: M1 complete. Branch pushed, PR open for review: https://github.com/my3dmonitorapp/keyboard-dm/pull/1 (not merged). 206 tests, smoke exit 0. Budget used: 7/8 tasks, 1 reserve unused, no correction spend.
+
+## M1.1 final state
+
+235 tests pass; `.venv/bin/python -m desktop_app --smoke` exits 0. Since M1,
+matrix keys gained independent half-unit visual offsets, the full 1u–6.25u width
+preset set, occlusion-aware rendering, ESP32 GPIO safety validation, and a
+highlighted selected-key inspector with cell identity and an appearance reset.
+Matrix save/load/save/reload is covered at both `MatrixConfig` and `Layout`
+layers, including assignment preservation and v1/v2 compatibility. PR #1 is
+open, non-draft, cleanly mergeable, and not merged.

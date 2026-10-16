@@ -143,6 +143,15 @@ QFrame#keyInspector {
     border: 1px solid #353b44;
     border-radius: 7px;
 }
+QFrame#matrixKeyPanel {
+    background-color: #1b2832;
+    border: 1px solid #4f91bf;
+    border-radius: 5px;
+}
+QLabel#matrixSelectedKeyLabel {
+    color: #9fd3f4;
+    font-weight: 600;
+}
 QLabel#provisionalBanner {
     background-color: #2b2922;
     color: #d9c98c;
@@ -1101,11 +1110,22 @@ class Keyboard75Window(QMainWindow):
         self.inspector_key_id = QLabel("Key ID: Select a key", inspector)
         self.inspector_position = QLabel("Position: —", inspector)
 
-        self.matrix_key_panel = QWidget(inspector)
+        self.matrix_key_panel = QFrame(inspector)
         self.matrix_key_panel.setObjectName("matrixKeyPanel")
+        self.matrix_key_panel.setFrameShape(QFrame.Shape.StyledPanel)
         matrix_form = QFormLayout(self.matrix_key_panel)
-        matrix_form.setContentsMargins(0, 0, 0, 0)
+        matrix_form.setContentsMargins(9, 9, 9, 9)
         matrix_form.setSpacing(5)
+        self.matrix_selected_key_label = QLabel(
+            "Selected matrix key: —", self.matrix_key_panel
+        )
+        self.matrix_selected_key_label.setObjectName("matrixSelectedKeyLabel")
+        self.matrix_selected_cell_label = QLabel(
+            "Grid cell: —", self.matrix_key_panel
+        )
+        self.matrix_selected_cell_label.setObjectName("matrixSelectedCellLabel")
+        matrix_form.addRow(self.matrix_selected_key_label)
+        matrix_form.addRow(self.matrix_selected_cell_label)
         self.matrix_label_input = QLineEdit(self.matrix_key_panel)
         self.matrix_label_input.setObjectName("matrixKeyLabelInput")
         matrix_form.addRow("Display label", self.matrix_label_input)
@@ -1136,6 +1156,14 @@ class Keyboard75Window(QMainWindow):
         )
         self.matrix_position_button.setObjectName("matrixKeyVisualPositionButton")
         matrix_form.addRow(self.matrix_position_button)
+        self.matrix_reset_button = QPushButton(
+            "Reset appearance to defaults", self.matrix_key_panel
+        )
+        self.matrix_reset_button.setObjectName("matrixKeyResetButton")
+        self.matrix_reset_button.setToolTip(
+            "Reset this key's label, width, and visual offsets; keep its cell and action"
+        )
+        matrix_form.addRow(self.matrix_reset_button)
         self.matrix_edit_warning = QLabel(self.matrix_key_panel)
         self.matrix_edit_warning.setObjectName("matrixKeyEditWarning")
         self.matrix_edit_warning.setWordWrap(True)
@@ -1253,6 +1281,9 @@ class Keyboard75Window(QMainWindow):
         self.matrix_position_button.clicked.connect(
             self.apply_selected_matrix_visual_offset
         )
+        self.matrix_reset_button.clicked.connect(
+            self.reset_selected_matrix_key_appearance
+        )
         self._loading_action_editor = False
         self._update_action_editor_visibility()
         self._set_action_editor_enabled(False)
@@ -1359,6 +1390,10 @@ class Keyboard75Window(QMainWindow):
             self.matrix_edit_warning.clear()
             return
         cell = (key.y, key.x)
+        self.matrix_selected_key_label.setText(f"Selected matrix key: {key.key_id}")
+        self.matrix_selected_cell_label.setText(
+            f"Grid cell: row {cell[0]}, column {cell[1]}"
+        )
         self._loading_matrix_editor = True
         self.matrix_label_input.setText(self.matrix_config.label_for(cell))
         self._set_combo_data(
@@ -1441,6 +1476,17 @@ class Keyboard75Window(QMainWindow):
             self.matrix_config.key_visual_offsets.pop(cell, None)
         else:
             self.matrix_config.key_visual_offsets[cell] = offset
+        self._regenerate_matrix_layout(cell)
+        return True
+
+    def reset_selected_matrix_key_appearance(self) -> bool:
+        """Reset selected-key presentation without changing its cell or action."""
+        cell = self._selected_matrix_cell()
+        if cell is None or self.matrix_config is None:
+            return False
+        self.matrix_config.key_labels.pop(cell, None)
+        self.matrix_config.key_widths.pop(cell, None)
+        self.matrix_config.key_visual_offsets.pop(cell, None)
         self._regenerate_matrix_layout(cell)
         return True
 

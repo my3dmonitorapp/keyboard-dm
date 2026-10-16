@@ -1,4 +1,4 @@
-# Keyboard75 Product Specification
+# Keyboard DM Product Specification
 
 Version: 1.1
 Date: 2026-10-11  
@@ -6,7 +6,7 @@ Status: Phase 0 baseline, updated by BD-1
 
 ## 1. Product definition
 
-Keyboard75 is a 75-key mechanical keyboard built around a standard ESP32, preferably an ESP32-WROOM-32 DevKit-class board or similar economical board; the exact part remains **TBD**. It shall operate primarily as a Bluetooth Low Energy (BLE) HID keyboard. USB serial, provided by the development board's USB-UART bridge or a routed UART, shall be used for programming, firmware updates, and configuration. Native USB HID is not a requirement and is not available on the standard ESP32.
+Keyboard DM is a universal programmable keyboard platform built around a standard ESP32, preferably an ESP32-WROOM-32 DevKit-class board or similar economical board; the exact part remains **TBD**. It shall operate primarily as a Bluetooth Low Energy (BLE) HID keyboard. USB serial, provided by the development board's USB-UART bridge or a routed UART, shall be used for programming, firmware updates, and configuration. Native USB HID is not a requirement and is not available on the standard ESP32.
 
 Users shall be able to customize key assignments, macros, shortcuts, profiles, and RGB lighting where supported by the eventual LED hardware, with settings retained in ESP32 flash/NVS. Battery operation is optional and deferred; its scope remains **TBD**.
 

@@ -1,4 +1,4 @@
-# Keyboard75 Development Roadmap
+# Keyboard DM Development Roadmap
 
 Date: 2026-10-11  
 Primary target MCU: standard ESP32 (ESP32-WROOM-32 class, part **TBD**)

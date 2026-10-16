@@ -353,7 +353,7 @@ class Keyboard75Window(QMainWindow):
         heading_row = QHBoxLayout()
         controls_row = QHBoxLayout()
 
-        title = QLabel("Keyboard75 Layout Editor", top_bar)
+        title = QLabel("Keyboard DM Layout Editor", top_bar)
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
         self.device_status_label = QLabel(top_bar)
         self.device_status_label.setObjectName("deviceStatusLabel")
@@ -908,7 +908,7 @@ class Keyboard75Window(QMainWindow):
         self.local_profile_status_label.setText(status)
         title_unsaved = " (unsaved)" if self.dirty else ""
         self.setWindowTitle(
-            f"Keyboard75 — {self.layout.name} — {project}{title_unsaved}"
+            f"Keyboard DM — {self.layout.name} — {project}{title_unsaved}"
         )
 
     def confirm_unsaved_changes(self) -> bool:
@@ -995,7 +995,7 @@ class Keyboard75Window(QMainWindow):
 
     def _open_profile_dialog(self) -> None:
         path, _selected_filter = QFileDialog.getOpenFileName(
-            self, "Open Keyboard75 profile", "", "JSON profiles (*.json)"
+            self, "Open Keyboard DM profile", "", "JSON profiles (*.json)"
         )
         if not path:
             return
@@ -1006,7 +1006,7 @@ class Keyboard75Window(QMainWindow):
 
     def _save_profile_dialog(self) -> bool:
         path, _selected_filter = QFileDialog.getSaveFileName(
-            self, "Save local Keyboard75 profile", "", "JSON profiles (*.json)"
+            self, "Save local Keyboard DM profile", "", "JSON profiles (*.json)"
         )
         if not path:
             return False

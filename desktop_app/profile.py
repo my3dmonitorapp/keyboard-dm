@@ -1,4 +1,4 @@
-"""Read and write Keyboard75 assignment profiles.
+"""Read and write Keyboard DM assignment profiles.
 
 Profiles use the frozen Milestone S1.2 version 2 shape and store serialized
 typed actions. For compatibility with the S1.1 app/project callers,

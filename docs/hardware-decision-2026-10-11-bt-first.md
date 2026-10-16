@@ -30,7 +30,7 @@ Consequences that reverse the previous baseline:
 
 ## 3. Verified standard-ESP32 facts (accessed 2026-10-11)
 
-| Capability | Verified fact | Relevance to Keyboard75 |
+| Capability | Verified fact | Relevance to Keyboard DM |
 | --- | --- | --- |
 | GPIO count | The classic ESP32 exposes 34 physical GPIOs (numbered 0–39). On WROOM-32 modules, a subset is usable. | Sets the I/O ceiling for the 75-key matrix before any allocation. |
 | Reserved flash pins | **GPIO6–GPIO11 are wired to the module's SPI flash** and must not be reused. | Reduces the usable pin budget; must be excluded from any matrix. |

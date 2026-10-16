@@ -1,4 +1,4 @@
-# Keyboard75 Desktop Application
+# Keyboard DM Desktop Application
 
 Milestone S1.2 is a universal PySide6 keyboard configurator for built-in 6-, 9-, 12-, and 75-key layouts plus custom grids from 2 to 500 keys. It communicates only with a deterministic simulated ESP32-S3 device: the application makes no real USB, BLE, network, firmware, or hardware calls.
 
@@ -48,7 +48,7 @@ The smoke flow verifies the real GUI, a typed 75-key shortcut profile save/reope
 python -m desktop_app --smoke
 ```
 
-The command forces Qt's offscreen platform, exits 0 on success, and prints `Keyboard75 smoke test passed`. A failed check exits nonzero with a message beginning `Keyboard75 smoke test FAILED`.
+The command forces Qt's offscreen platform, exits 0 on success, and prints `Keyboard DM smoke test passed`. A failed check exits nonzero with a message beginning `Keyboard DM smoke test FAILED`.
 
 ## Tests
 

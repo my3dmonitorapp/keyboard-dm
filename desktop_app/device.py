@@ -18,7 +18,7 @@ class DeviceConnectionError(RuntimeError):
 
 
 class SimulatedESP32S3Device:
-    """In-memory simulation of the Keyboard75 ESP32-S3.
+    """In-memory simulation of the simulated Keyboard DM ESP32 board.
 
     The active transport defaults to BLE. Calling :meth:`set_host_connected`
     with ``True`` automatically prefers USB; calling it with ``False`` returns

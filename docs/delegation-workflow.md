@@ -1,4 +1,4 @@
-# Keyboard75 — Development Workflow (Hermes → Codex)
+# Keyboard DM — Development Workflow (Hermes → Codex)
 
 Verified 2026-10-11, Codex CLI 0.161.0 on `dev-machine` (SSH alias `/project`).
 
@@ -33,7 +33,7 @@ ssh /project 'export PATH=$HOME/.local/bin:$PATH; cd /projects/<project>;
 
 ## Safety limits
 - Sandbox `workspace-write` (never `danger-full-access`): writes limited to the
-  Keyboard75 repo; unrelated personal files untouched.
+  Keyboard DM repo; unrelated personal files untouched.
 - No hardware flashing, no production deployment, no system/package changes
   outside the project without explicit authorization.
 - Preserve the existing 12-key vendor reference app in the repo.

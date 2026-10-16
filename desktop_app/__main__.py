@@ -1,4 +1,4 @@
-"""Command-line entry point for the Keyboard75 desktop application."""
+"""Command-line entry point for the Keyboard DM desktop application."""
 
 from __future__ import annotations
 
@@ -155,11 +155,11 @@ def run_smoke() -> int:
         with tempfile.TemporaryDirectory(prefix="/project-smoke-") as temp_dir:
             _run_smoke_flow(application, Path(temp_dir) / "smoke-profile.json")
     except Exception as error:
-        print(f"Keyboard75 smoke test FAILED: {error}", file=sys.stderr)
+        print(f"Keyboard DM smoke test FAILED: {error}", file=sys.stderr)
         return 1
 
     print(
-        "Keyboard75 smoke test passed: 75-key K07=Ctrl+Shift+S typed profile "
+        "Keyboard DM smoke test passed: 75-key K07=Ctrl+Shift+S typed profile "
         "save/reopen and JSON verification; "
         "simulated device connected via USB; 12-key K12=Enter project "
         "save/reload verified."
@@ -169,7 +169,7 @@ def run_smoke() -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Launch the desktop app or run its headless smoke test."""
-    parser = argparse.ArgumentParser(description="Keyboard75 desktop application")
+    parser = argparse.ArgumentParser(description="Keyboard DM desktop application")
     parser.add_argument(
         "--smoke",
         action="store_true",

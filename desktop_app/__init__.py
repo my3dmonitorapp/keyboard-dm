@@ -1,4 +1,4 @@
-"""Keyboard75 desktop application package."""
+"""Keyboard DM desktop application package."""
 
 from .layout_model import Key, Layout, PROVISIONAL_75_LAYOUT
 

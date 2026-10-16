@@ -1,4 +1,4 @@
-# Keyboard75 Hardware Requirements
+# Keyboard DM Hardware Requirements
 
 Date: 2026-10-11  
 Status: Phase 0 planning baseline  
@@ -12,7 +12,7 @@ The physical key matrix is still being soldered. Every GPIO assignment, exact ma
 
 ## 2. Verified standard-ESP32 facts
 
-| Capability | Verified fact | Relevance to Keyboard75 |
+| Capability | Verified fact | Relevance to Keyboard DM |
 | --- | --- | --- |
 | GPIO count | The classic ESP32 exposes 34 physical GPIOs, numbered within GPIO0–GPIO39; the usable subset depends on the module and board. | Establishes the I/O ceiling before board selection or allocation. |
 | Reserved flash pins | **GPIO6–GPIO11 are wired to SPI flash** on ESP32-WROOM-32 modules and must not be reused. | These pins are excluded from the matrix budget. |

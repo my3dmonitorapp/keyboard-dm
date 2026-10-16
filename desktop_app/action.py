@@ -1,4 +1,4 @@
-"""Typed, serializable keyboard actions for Keyboard75.
+"""Typed, serializable keyboard actions for Keyboard DM.
 
 The model in this module deliberately has no GUI dependencies.  Keyboard-page
 and consumer-page usages are kept separate so callers cannot accidentally put

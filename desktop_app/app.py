@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QVBoxLayout,
@@ -44,6 +45,12 @@ from .action import (
 from .device import SimulatedESP32S3Device
 from .layout_model import Key, Layout
 from .layouts import BUILT_IN_LAYOUTS, L75, make_custom_layout
+from .matrix_model import (
+    DEFAULT_WIDTH_HALF_UNITS,
+    MAX_WIDTH_HALF_UNITS,
+    MIN_WIDTH_HALF_UNITS,
+    MatrixConfig,
+)
 from .profile import (
     ProfileError,
     create_profile,
@@ -232,6 +239,159 @@ QPushButton:checked:hover {
 """
 
 
+class MatrixSetupDialog(QDialog):
+    """Editor for the dimensions and populated cells of a sparse matrix."""
+
+    def __init__(
+        self, config: MatrixConfig | None = None, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("matrixSetupDialog")
+        self.setWindowTitle("Matrix layout")
+        self._switches = set(config.switches) if config is not None else set()
+        self._key_widths = dict(config.key_widths) if config is not None else {}
+        self._selected_cell: tuple[int, int] | None = None
+        self.cell_checkboxes: dict[tuple[int, int], QCheckBox] = {}
+
+        root = QVBoxLayout(self)
+        dimensions = QHBoxLayout()
+        self.rows_input = QSpinBox(self)
+        self.rows_input.setObjectName("matrixRowsInput")
+        self.rows_input.setRange(2, 32)
+        self.rows_input.setValue(config.rows if config is not None else 5)
+        self.cols_input = QSpinBox(self)
+        self.cols_input.setObjectName("matrixColsInput")
+        self.cols_input.setRange(2, 64)
+        self.cols_input.setValue(config.cols if config is not None else 15)
+        dimensions.addWidget(QLabel("Rows", self))
+        dimensions.addWidget(self.rows_input)
+        dimensions.addWidget(QLabel("Columns", self))
+        dimensions.addWidget(self.cols_input)
+        dimensions.addStretch()
+        root.addLayout(dimensions)
+
+        help_label = QLabel(
+            "Select the intersections that contain switches. "
+            "The width field applies to the last selected switch.",
+            self,
+        )
+        help_label.setWordWrap(True)
+        root.addWidget(help_label)
+
+        self.grid_widget = QWidget(self)
+        self.grid_widget.setObjectName("matrixCellGrid")
+        self.grid_layout = QGridLayout(self.grid_widget)
+        self.grid_layout.setContentsMargins(4, 4, 4, 4)
+        self.grid_layout.setSpacing(4)
+        scroll = QScrollArea(self)
+        scroll.setObjectName("matrixGridScrollArea")
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self.grid_widget)
+        root.addWidget(scroll, stretch=1)
+
+        width_row = QHBoxLayout()
+        width_row.addWidget(QLabel("Selected key width (half-units)", self))
+        self.width_input = QSpinBox(self)
+        self.width_input.setObjectName("matrixKeyWidthInput")
+        self.width_input.setRange(MIN_WIDTH_HALF_UNITS, MAX_WIDTH_HALF_UNITS)
+        self.width_input.setValue(DEFAULT_WIDTH_HALF_UNITS)
+        self.width_input.setEnabled(False)
+        self.width_input.valueChanged.connect(self._set_selected_width)
+        width_row.addWidget(self.width_input)
+        width_row.addStretch()
+        root.addLayout(width_row)
+
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
+        self.generate_button = self.buttons.addButton(
+            "Generate", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        self.generate_button.setObjectName("matrixGenerateButton")
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        root.addWidget(self.buttons)
+
+        self.rows_input.valueChanged.connect(self._rebuild_grid)
+        self.cols_input.valueChanged.connect(self._rebuild_grid)
+        self._rebuild_grid()
+        self.resize(760, 520)
+
+    def _rebuild_grid(self) -> None:
+        """Recreate dimension headers/cells while retaining in-bounds values."""
+        rows, cols = self.rows_input.value(), self.cols_input.value()
+        self._switches = {
+            cell for cell in self._switches if cell[0] < rows and cell[1] < cols
+        }
+        self._key_widths = {
+            cell: width
+            for cell, width in self._key_widths.items()
+            if cell in self._switches
+        }
+        while self.grid_layout.count():
+            item = self.grid_layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        self.cell_checkboxes = {}
+        for column in range(cols):
+            label = QLabel(str(column), self.grid_widget)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.grid_layout.addWidget(label, 0, column + 1)
+        for row in range(rows):
+            label = QLabel(str(row), self.grid_widget)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.grid_layout.addWidget(label, row + 1, 0)
+            for column in range(cols):
+                cell = (row, column)
+                checkbox = QCheckBox(self.grid_widget)
+                checkbox.setObjectName(f"matrixCell_{row}_{column}")
+                checkbox.setToolTip(f"Row {row}, column {column}")
+                checkbox.setChecked(cell in self._switches)
+                checkbox.toggled.connect(
+                    lambda checked, selected=cell: self._toggle_cell(selected, checked)
+                )
+                self.grid_layout.addWidget(
+                    checkbox,
+                    row + 1,
+                    column + 1,
+                    alignment=Qt.AlignmentFlag.AlignCenter,
+                )
+                self.cell_checkboxes[cell] = checkbox
+        if self._selected_cell not in self._switches:
+            self._selected_cell = None
+            self.width_input.setEnabled(False)
+
+    def _toggle_cell(self, cell: tuple[int, int], checked: bool) -> None:
+        self._selected_cell = cell
+        if checked:
+            self._switches.add(cell)
+            self.width_input.blockSignals(True)
+            self.width_input.setValue(
+                self._key_widths.get(cell, DEFAULT_WIDTH_HALF_UNITS)
+            )
+            self.width_input.blockSignals(False)
+            self.width_input.setEnabled(True)
+        else:
+            self._switches.discard(cell)
+            self._key_widths.pop(cell, None)
+            self.width_input.setEnabled(False)
+
+    def _set_selected_width(self, width: int) -> None:
+        if self._selected_cell not in self._switches:
+            return
+        if width == DEFAULT_WIDTH_HALF_UNITS:
+            self._key_widths.pop(self._selected_cell, None)
+        else:
+            self._key_widths[self._selected_cell] = width
+
+    def matrix_config(self) -> MatrixConfig:
+        """Return an independent model containing the current editor values."""
+        return MatrixConfig(
+            rows=self.rows_input.value(),
+            cols=self.cols_input.value(),
+            switches=set(self._switches),
+            key_widths=dict(self._key_widths),
+        )
+
+
 class Keyboard75Window(QMainWindow):
     """Main window for editing an in-memory keyboard layout."""
 
@@ -256,6 +416,9 @@ class Keyboard75Window(QMainWindow):
         self.current_profile_path: Path | None = None
         self.current_project_name: str | None = None
         self.current_project_path: Path | None = None
+        self.matrix_config: MatrixConfig | None = None
+        self.matrix_layout: Layout | None = None
+        self.matrix_setup_dialog: MatrixSetupDialog | None = None
         self.dirty = False
         self._compatibility_clear_requested = False
 
@@ -335,6 +498,16 @@ class Keyboard75Window(QMainWindow):
         custom_action.setObjectName("customLayoutAction")
         custom_action.triggered.connect(self._open_custom_layout_dialog)
         layout_menu.addAction(custom_action)
+        matrix_action = QAction("Matrix...", self)
+        matrix_action.setObjectName("matrixLayoutAction")
+        matrix_action.triggered.connect(self._open_matrix_layout_dialog)
+        layout_menu.addAction(matrix_action)
+
+        self.saved_matrix_action = QAction("Use generated matrix", self)
+        self.saved_matrix_action.setObjectName("savedMatrixLayoutAction")
+        self.saved_matrix_action.setEnabled(False)
+        self.saved_matrix_action.triggered.connect(self.switch_to_matrix_layout)
+        layout_menu.addAction(self.saved_matrix_action)
 
     def _build_status_bar(self) -> None:
         self.local_profile_status_label = QLabel(self)
@@ -454,9 +627,12 @@ class Keyboard75Window(QMainWindow):
         previous_assignments = {
             key.key_id: key.assignment for key in self.layout.keys
         }
+        if self.layout.label == "matrix" and self.matrix_layout is not None:
+            self.matrix_layout = Layout.from_dict(self.layout.to_dict())
         new_layout = Layout.from_dict(layout.to_dict())
         for key in new_layout.keys:
-            key.assignment = previous_assignments.get(key.key_id)
+            if key.key_id in previous_assignments:
+                key.assignment = previous_assignments[key.key_id]
 
         self._install_layout(new_layout)
         self._set_dirty(True)
@@ -535,6 +711,37 @@ class Keyboard75Window(QMainWindow):
             QMessageBox.critical(self, "Could not create custom layout", str(error))
             return
         self.switch_layout(custom_layout)
+
+    def _open_matrix_layout_dialog(self) -> None:
+        dialog = MatrixSetupDialog(self.matrix_config, self)
+        self.matrix_setup_dialog = dialog
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        config = dialog.matrix_config()
+        ok, errors = config.validate()
+        if not ok:
+            QMessageBox.critical(
+                self, "Could not create matrix layout", "\n".join(errors)
+            )
+            return
+        generated = config.to_layout()
+        if self.matrix_layout is not None:
+            assignments = {key.key_id: key.assignment for key in self.matrix_layout.keys}
+            for key in generated.keys:
+                if key.key_id in assignments:
+                    key.assignment = assignments[key.key_id]
+        if not self.switch_layout(generated):
+            return
+        self.matrix_config = MatrixConfig.from_dict(config.to_dict())
+        self.matrix_layout = Layout.from_dict(self.layout.to_dict())
+        self.saved_matrix_action.setEnabled(True)
+
+    def switch_to_matrix_layout(self) -> bool:
+        """Activate the last generated matrix without reopening its editor."""
+        if self.matrix_layout is None:
+            self._open_matrix_layout_dialog()
+            return self.matrix_layout is not None
+        return self.switch_layout(self.matrix_layout)
 
     def _build_inspector(self) -> QWidget:
         inspector = QFrame(self)

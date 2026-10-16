@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -19,9 +20,11 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QVBoxLayout,
@@ -42,8 +45,16 @@ from .action import (
     parse_shortcut,
 )
 from .device import SimulatedESP32S3Device
+from .esp32_gpio import PinRole, suggest_safe_pins, validate_gpio_pin
 from .layout_model import Key, Layout
 from .layouts import BUILT_IN_LAYOUTS, L75, make_custom_layout
+from .matrix_model import (
+    DEFAULT_WIDTH_HALF_UNITS,
+    MAX_WIDTH_HALF_UNITS,
+    MIN_WIDTH_HALF_UNITS,
+    WIDTH_PRESETS_HALF_UNITS,
+    MatrixConfig,
+)
 from .profile import (
     ProfileError,
     create_profile,
@@ -131,6 +142,15 @@ QFrame#keyInspector {
     background-color: #20242a;
     border: 1px solid #353b44;
     border-radius: 7px;
+}
+QFrame#matrixKeyPanel {
+    background-color: #1b2832;
+    border: 1px solid #4f91bf;
+    border-radius: 5px;
+}
+QLabel#matrixSelectedKeyLabel {
+    color: #9fd3f4;
+    font-weight: 600;
 }
 QLabel#provisionalBanner {
     background-color: #2b2922;
@@ -229,7 +249,447 @@ QPushButton:checked {
 QPushButton:checked:hover {
     background-color: #315c79;
 }
+QPushButton[devicePressed="true"] {
+    background-color: #8a4f16;
+    color: #ffffff;
+    border-color: #ffc36b;
+    border-bottom-color: #b66e25;
+}
+QPushButton[devicePressed="true"]:hover {
+    background-color: #9b5b1c;
+}
 """
+
+
+class MatrixSetupDialog(QDialog):
+    """Editor for the dimensions and populated cells of a sparse matrix."""
+
+    def __init__(
+        self, config: MatrixConfig | None = None, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("matrixSetupDialog")
+        self.setWindowTitle("Matrix layout")
+        self._switches = set(config.switches) if config is not None else set()
+        self._key_widths = dict(config.key_widths) if config is not None else {}
+        self._key_labels = dict(config.key_labels) if config is not None else {}
+        self._key_visual_offsets = (
+            dict(config.key_visual_offsets) if config is not None else {}
+        )
+        self._row_pins = list(config.row_pins) if config is not None else []
+        self._column_pins = list(config.column_pins) if config is not None else []
+        self._min_pin = config.min_pin if config is not None else 0
+        self._max_pin = config.max_pin if config is not None else 39
+        self._selected_cell: tuple[int, int] | None = None
+        self.cell_checkboxes: dict[tuple[int, int], QCheckBox] = {}
+
+        root = QVBoxLayout(self)
+        dimensions = QHBoxLayout()
+        self.rows_input = QSpinBox(self)
+        self.rows_input.setObjectName("matrixRowsInput")
+        self.rows_input.setRange(2, 32)
+        self.rows_input.setValue(config.rows if config is not None else 5)
+        self.cols_input = QSpinBox(self)
+        self.cols_input.setObjectName("matrixColsInput")
+        self.cols_input.setRange(2, 64)
+        self.cols_input.setValue(config.cols if config is not None else 15)
+        dimensions.addWidget(QLabel("Rows", self))
+        dimensions.addWidget(self.rows_input)
+        dimensions.addWidget(QLabel("Columns", self))
+        dimensions.addWidget(self.cols_input)
+        dimensions.addStretch()
+        root.addLayout(dimensions)
+
+        help_label = QLabel(
+            "Select the intersections that contain switches. "
+            "The width field applies to the last selected switch.",
+            self,
+        )
+        help_label.setWordWrap(True)
+        root.addWidget(help_label)
+
+        self.grid_widget = QWidget(self)
+        self.grid_widget.setObjectName("matrixCellGrid")
+        self.grid_layout = QGridLayout(self.grid_widget)
+        self.grid_layout.setContentsMargins(4, 4, 4, 4)
+        self.grid_layout.setSpacing(4)
+        scroll = QScrollArea(self)
+        scroll.setObjectName("matrixGridScrollArea")
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self.grid_widget)
+        root.addWidget(scroll, stretch=1)
+
+        width_row = QHBoxLayout()
+        width_row.addWidget(QLabel("Selected key width (half-units)", self))
+        self.width_input = QDoubleSpinBox(self)
+        self.width_input.setObjectName("matrixKeyWidthInput")
+        self.width_input.setRange(MIN_WIDTH_HALF_UNITS, MAX_WIDTH_HALF_UNITS)
+        self.width_input.setSingleStep(0.5)
+        self.width_input.setDecimals(1)
+        self.width_input.setValue(DEFAULT_WIDTH_HALF_UNITS)
+        self.width_input.setEnabled(False)
+        self.width_input.valueChanged.connect(self._set_selected_width)
+        width_row.addWidget(self.width_input)
+        width_row.addStretch()
+        root.addLayout(width_row)
+
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
+        self.generate_button = self.buttons.addButton(
+            "Generate", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        self.generate_button.setObjectName("matrixGenerateButton")
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        root.addWidget(self.buttons)
+
+        self.rows_input.valueChanged.connect(self._rebuild_grid)
+        self.cols_input.valueChanged.connect(self._rebuild_grid)
+        self._rebuild_grid()
+        self.resize(760, 520)
+
+    def _rebuild_grid(self) -> None:
+        """Recreate dimension headers/cells while retaining in-bounds values."""
+        rows, cols = self.rows_input.value(), self.cols_input.value()
+        self._switches = {
+            cell for cell in self._switches if cell[0] < rows and cell[1] < cols
+        }
+        self._key_widths = {
+            cell: width
+            for cell, width in self._key_widths.items()
+            if cell in self._switches
+        }
+        self._key_labels = {
+            cell: label
+            for cell, label in self._key_labels.items()
+            if cell in self._switches
+        }
+        self._key_visual_offsets = {
+            cell: offset
+            for cell, offset in self._key_visual_offsets.items()
+            if cell in self._switches
+        }
+        while self.grid_layout.count():
+            item = self.grid_layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        self.cell_checkboxes = {}
+        for column in range(cols):
+            label = QLabel(str(column), self.grid_widget)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.grid_layout.addWidget(label, 0, column + 1)
+        for row in range(rows):
+            label = QLabel(str(row), self.grid_widget)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.grid_layout.addWidget(label, row + 1, 0)
+            for column in range(cols):
+                cell = (row, column)
+                checkbox = QCheckBox(self.grid_widget)
+                checkbox.setObjectName(f"matrixCell_{row}_{column}")
+                checkbox.setToolTip(f"Row {row}, column {column}")
+                checkbox.setChecked(cell in self._switches)
+                checkbox.toggled.connect(
+                    lambda checked, selected=cell: self._toggle_cell(selected, checked)
+                )
+                self.grid_layout.addWidget(
+                    checkbox,
+                    row + 1,
+                    column + 1,
+                    alignment=Qt.AlignmentFlag.AlignCenter,
+                )
+                self.cell_checkboxes[cell] = checkbox
+        if self._selected_cell not in self._switches:
+            self._selected_cell = None
+            self.width_input.setEnabled(False)
+
+    def _toggle_cell(self, cell: tuple[int, int], checked: bool) -> None:
+        self._selected_cell = cell
+        if checked:
+            self._switches.add(cell)
+            self.width_input.blockSignals(True)
+            self.width_input.setValue(
+                self._key_widths.get(cell, DEFAULT_WIDTH_HALF_UNITS)
+            )
+            self.width_input.blockSignals(False)
+            self.width_input.setEnabled(True)
+        else:
+            self._switches.discard(cell)
+            self._key_widths.pop(cell, None)
+            self._key_labels.pop(cell, None)
+            self._key_visual_offsets.pop(cell, None)
+            self.width_input.setEnabled(False)
+
+    def _set_selected_width(self, width: float) -> None:
+        if self._selected_cell not in self._switches:
+            return
+        if width == DEFAULT_WIDTH_HALF_UNITS:
+            self._key_widths.pop(self._selected_cell, None)
+        else:
+            self._key_widths[self._selected_cell] = width
+
+    def matrix_config(self) -> MatrixConfig:
+        """Return an independent model containing the current editor values."""
+        return MatrixConfig(
+            rows=self.rows_input.value(),
+            cols=self.cols_input.value(),
+            switches=set(self._switches),
+            key_widths=dict(self._key_widths),
+            key_labels=dict(self._key_labels),
+            key_visual_offsets=dict(self._key_visual_offsets),
+            row_pins=(self._row_pins + [None] * self.rows_input.value())[
+                : self.rows_input.value()
+            ],
+            column_pins=(self._column_pins + [None] * self.cols_input.value())[
+                : self.cols_input.value()
+            ],
+            min_pin=self._min_pin,
+            max_pin=self._max_pin,
+        )
+
+
+class MatrixPinmapDialog(QDialog):
+    """Live GPIO assignment editor backed directly by a ``MatrixConfig``."""
+
+    def __init__(
+        self,
+        config: MatrixConfig,
+        parent: QWidget | None = None,
+        changed: Callable[[], None] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("matrixPinmapDialog")
+        self.setWindowTitle("Matrix GPIO pinmap")
+        self.config = config
+        self._changed = changed
+        self.row_pin_inputs: list[QLineEdit] = []
+        self.column_pin_inputs: list[QLineEdit] = []
+        self.row_pin_messages: list[QLabel] = []
+        self.column_pin_messages: list[QLabel] = []
+        self.validation_errors: list[str] = []
+
+        root = QVBoxLayout(self)
+        help_label = QLabel(
+            "ESP32-WROOM-32 scan roles: rows are outputs (driven low); columns "
+            "are inputs with pull-ups. Every matrix line must be assigned.",
+            self,
+        )
+        help_label.setWordWrap(True)
+        root.addWidget(help_label)
+
+        range_layout = QHBoxLayout()
+        self.min_pin_input = QSpinBox(self)
+        self.min_pin_input.setObjectName("matrixMinPinInput")
+        self.min_pin_input.setRange(-99999, 99999)
+        self.min_pin_input.setValue(config.min_pin)
+        self.max_pin_input = QSpinBox(self)
+        self.max_pin_input.setObjectName("matrixMaxPinInput")
+        self.max_pin_input.setRange(-99999, 99999)
+        self.max_pin_input.setValue(config.max_pin)
+        range_layout.addWidget(QLabel("Allowed GPIO range", self))
+        range_layout.addWidget(self.min_pin_input)
+        range_layout.addWidget(QLabel("to", self))
+        range_layout.addWidget(self.max_pin_input)
+        range_layout.addStretch()
+        root.addLayout(range_layout)
+
+        grid_widget = QWidget(self)
+        grid_widget.setObjectName("matrixPinmapGrid")
+        grid = QGridLayout(grid_widget)
+        grid.addWidget(QLabel("Matrix line / role", grid_widget), 0, 0)
+        grid.addWidget(QLabel("GPIO pin", grid_widget), 0, 1)
+        grid.addWidget(QLabel("Validation", grid_widget), 0, 2)
+        grid_row = 1
+        for index, pin in enumerate(config.row_pins):
+            editor = self._make_pin_editor("row", index, pin, grid_widget)
+            message = self._make_pin_message("row", index, grid_widget)
+            self.row_pin_inputs.append(editor)
+            self.row_pin_messages.append(message)
+            grid.addWidget(QLabel(f"Row {index} (output)", grid_widget), grid_row, 0)
+            grid.addWidget(editor, grid_row, 1)
+            grid.addWidget(message, grid_row, 2)
+            grid_row += 1
+        for index, pin in enumerate(config.column_pins):
+            editor = self._make_pin_editor("column", index, pin, grid_widget)
+            message = self._make_pin_message("column", index, grid_widget)
+            self.column_pin_inputs.append(editor)
+            self.column_pin_messages.append(message)
+            grid.addWidget(
+                QLabel(f"Column {index} (input + pull-up)", grid_widget),
+                grid_row,
+                0,
+            )
+            grid.addWidget(editor, grid_row, 1)
+            grid.addWidget(message, grid_row, 2)
+            grid_row += 1
+
+        scroll = QScrollArea(self)
+        scroll.setObjectName("matrixPinmapScrollArea")
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(grid_widget)
+        root.addWidget(scroll, stretch=1)
+
+        action_layout = QHBoxLayout()
+        self.suggest_button = QPushButton("Suggest pins", self)
+        self.suggest_button.setObjectName("matrixPinmapSuggestButton")
+        self.clear_button = QPushButton("Clear pins", self)
+        self.clear_button.setObjectName("matrixPinmapClearButton")
+        action_layout.addWidget(self.suggest_button)
+        action_layout.addWidget(self.clear_button)
+        action_layout.addStretch()
+        root.addLayout(action_layout)
+
+        self.warning_label = QLabel(self)
+        self.warning_label.setObjectName("matrixPinmapWarningPanel")
+        self.warning_label.setWordWrap(True)
+        self.warning_label.setStyleSheet(
+            "color: #f0c36b; background-color: #332b18; padding: 6px;"
+        )
+        root.addWidget(self.warning_label)
+
+        self.status_label = QLabel(self)
+        self.status_label.setObjectName("matrixPinmapStatusLabel")
+        self.status_label.setWordWrap(True)
+        root.addWidget(self.status_label)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+        self.min_pin_input.valueChanged.connect(self._pin_range_changed)
+        self.max_pin_input.valueChanged.connect(self._pin_range_changed)
+        self.suggest_button.clicked.connect(self.suggest_pins)
+        self.clear_button.clicked.connect(self.clear_pins)
+        self.refresh_validation()
+        self.resize(430, 520)
+
+    def _make_pin_editor(
+        self, kind: str, index: int, pin: Any, parent: QWidget
+    ) -> QLineEdit:
+        editor = QLineEdit(parent)
+        title_kind = "Row" if kind == "row" else "Column"
+        editor.setObjectName(f"matrix{title_kind}Pin_{index}")
+        editor.setPlaceholderText("-")
+        editor.setText("" if pin is None else str(pin))
+        editor.textChanged.connect(
+            lambda text, line_kind=kind, line_index=index: self._pin_changed(
+                line_kind, line_index, text
+            )
+        )
+        return editor
+
+    @staticmethod
+    def _make_pin_message(
+        kind: str, index: int, parent: QWidget
+    ) -> QLabel:
+        message = QLabel(parent)
+        title_kind = "Row" if kind == "row" else "Column"
+        message.setObjectName(f"matrix{title_kind}PinMessage_{index}")
+        message.setWordWrap(True)
+        message.setStyleSheet("color: #ef7777;")
+        return message
+
+    @staticmethod
+    def _pin_value(text: str) -> int | None | str:
+        stripped = text.strip()
+        if not stripped or stripped == "-":
+            return None
+        try:
+            return int(stripped)
+        except ValueError:
+            return stripped
+
+    def _pin_changed(self, kind: str, index: int, text: str) -> None:
+        pins = self.config.row_pins if kind == "row" else self.config.column_pins
+        pins[index] = self._pin_value(text)  # type: ignore[assignment]
+        self._notify_changed()
+
+    def _pin_range_changed(self) -> None:
+        self.config.min_pin = self.min_pin_input.value()
+        self.config.max_pin = self.max_pin_input.value()
+        self._notify_changed()
+
+    def _notify_changed(self) -> None:
+        self.refresh_validation()
+        if self._changed is not None:
+            self._changed()
+
+    def refresh_validation(self) -> bool:
+        """Render model and ESP32 electrical validation without mutation."""
+        _model_ok, errors = self.config.validate()
+        warnings: list[str] = []
+        for kind, pins, messages, role in (
+            ("Row", self.config.row_pins, self.row_pin_messages, PinRole.OUTPUT),
+            (
+                "Column",
+                self.config.column_pins,
+                self.column_pin_messages,
+                PinRole.INPUT,
+            ),
+        ):
+            for index, (pin, message) in enumerate(zip(pins, messages)):
+                result = validate_gpio_pin(pin, role)
+                pin_error = result.error
+                if (
+                    pin_error is None
+                    and type(pin) is int
+                    and not self.config.min_pin <= pin <= self.config.max_pin
+                ):
+                    pin_error = (
+                        f"GPIO {pin} is outside configured range "
+                        f"{self.config.min_pin}..{self.config.max_pin}"
+                    )
+                message.setText(pin_error or "")
+                if pin_error:
+                    errors.append(f"{kind} {index}: {pin_error}")
+                if result.warning:
+                    warnings.append(f"{kind} {index}: {result.warning}")
+
+        self.warning_label.setVisible(bool(warnings))
+        self.warning_label.setText(
+            "Boot/strapping warnings:\n" + "\n".join(warnings) if warnings else ""
+        )
+        ok = not errors
+        self.validation_errors = errors
+        self.status_label.setProperty("valid", ok)
+        if ok:
+            self.status_label.setText("Pinmap valid")
+            self.status_label.setStyleSheet("color: #79c98b;")
+        else:
+            self.status_label.setText("Invalid pinmap:\n" + "\n".join(errors))
+            self.status_label.setStyleSheet("color: #ef7777;")
+        return ok
+
+    def _show_model_pins(self) -> None:
+        for editor, pin in zip(self.row_pin_inputs, self.config.row_pins):
+            editor.blockSignals(True)
+            editor.setText("" if pin is None else str(pin))
+            editor.blockSignals(False)
+        for editor, pin in zip(self.column_pin_inputs, self.config.column_pins):
+            editor.blockSignals(True)
+            editor.setText("" if pin is None else str(pin))
+            editor.blockSignals(False)
+
+    def clear_pins(self) -> None:
+        """Clear every row and column assignment."""
+        self.config.row_pins[:] = [None] * self.config.rows
+        self.config.column_pins[:] = [None] * self.config.cols
+        self._show_model_pins()
+        self._notify_changed()
+
+    def suggest_pins(self) -> None:
+        """Assign distinct conservative pins in row-first, column-second order."""
+        roles = [PinRole.OUTPUT] * self.config.rows + [PinRole.INPUT] * self.config.cols
+        assignments = suggest_safe_pins(
+            roles,
+            min_pin=self.config.min_pin,
+            max_pin=self.config.max_pin,
+        )
+        assignments.extend(
+            [None] * (self.config.rows + self.config.cols - len(assignments))
+        )
+        self.config.row_pins[:] = assignments[: self.config.rows]
+        self.config.column_pins[:] = assignments[self.config.rows :]
+        self._show_model_pins()
+        self._notify_changed()
 
 
 class Keyboard75Window(QMainWindow):
@@ -250,14 +710,20 @@ class Keyboard75Window(QMainWindow):
         )
         if device is not None:
             self.device.set_key_ids(key.key_id for key in self.layout.keys)
+        self.device.add_pressed_state_listener(self.refresh_pressed_key_highlights)
         self.selected_key: Key | None = None
         self.key_widgets: dict[str, QPushButton] = {}
         self.profile: dict[str, object] | None = None
         self.current_profile_path: Path | None = None
         self.current_project_name: str | None = None
         self.current_project_path: Path | None = None
+        self.matrix_config: MatrixConfig | None = None
+        self.matrix_layout: Layout | None = None
+        self.matrix_setup_dialog: MatrixSetupDialog | None = None
+        self.matrix_pinmap_dialog: MatrixPinmapDialog | None = None
         self.dirty = False
         self._compatibility_clear_requested = False
+        self._loading_matrix_editor = False
 
         self.setStyleSheet(DARK_STYLESHEET)
         self._build_file_menu()
@@ -335,6 +801,22 @@ class Keyboard75Window(QMainWindow):
         custom_action.setObjectName("customLayoutAction")
         custom_action.triggered.connect(self._open_custom_layout_dialog)
         layout_menu.addAction(custom_action)
+        matrix_action = QAction("Matrix...", self)
+        matrix_action.setObjectName("matrixLayoutAction")
+        matrix_action.triggered.connect(self._open_matrix_layout_dialog)
+        layout_menu.addAction(matrix_action)
+
+        self.saved_matrix_action = QAction("Use generated matrix", self)
+        self.saved_matrix_action.setObjectName("savedMatrixLayoutAction")
+        self.saved_matrix_action.setEnabled(False)
+        self.saved_matrix_action.triggered.connect(self.switch_to_matrix_layout)
+        layout_menu.addAction(self.saved_matrix_action)
+
+        self.matrix_pinmap_action = QAction("GPIO pinmap...", self)
+        self.matrix_pinmap_action.setObjectName("matrixPinmapAction")
+        self.matrix_pinmap_action.setEnabled(False)
+        self.matrix_pinmap_action.triggered.connect(self.open_matrix_pinmap)
+        layout_menu.addAction(self.matrix_pinmap_action)
 
     def _build_status_bar(self) -> None:
         self.local_profile_status_label = QLabel(self)
@@ -402,16 +884,41 @@ class Keyboard75Window(QMainWindow):
         grid.setHorizontalSpacing(spacing)
         grid.setVerticalSpacing(spacing)
 
-        for key in self.layout.keys:
+        render_keys = self.layout.render_keys()
+        matrix_column_shift = 0
+        matrix_row_shift = 0
+        if self.layout.label == "matrix" and render_keys:
+            matrix_column_shift = -min(
+                0, min(key.x * 4 + key.dx * 2 for key in render_keys)
+            )
+            matrix_row_shift = -min(
+                0, min(key.y * 2 + key.dy for key in render_keys)
+            )
+
+        for key in render_keys:
             button = QPushButton(self._button_text(key), grid_container)
             button.setObjectName(f"keyButton_{key.key_id}")
             button.setCheckable(True)
-            button.setFixedSize(key_width, key_height)
+            if self.layout.label == "matrix":
+                width_u = key.w / 2
+                rendered_width = round(
+                    width_u * key_width + max(0, width_u - 1) * spacing
+                )
+                button.setFixedSize(rendered_width, key_height)
+            else:
+                button.setFixedSize(key_width, key_height)
             button.setStyleSheet(KEYCAP_STYLESHEET)
             button.clicked.connect(
                 lambda _checked=False, selected=key: self.select_key(selected)
             )
-            grid.addWidget(button, key.y, key.x, key.h, key.w)
+            if self.layout.label == "matrix":
+                grid_column = key.x * 4 + key.dx * 2 + matrix_column_shift
+                grid_row = key.y * 2 + key.dy + matrix_row_shift
+                grid.addWidget(
+                    button, grid_row, grid_column, key.h * 2, round(key.w * 2)
+                )
+            else:
+                grid.addWidget(button, key.y, key.x, key.h, round(key.w))
             self.key_widgets[key.key_id] = button
             self._refresh_keycap(key)
 
@@ -454,9 +961,12 @@ class Keyboard75Window(QMainWindow):
         previous_assignments = {
             key.key_id: key.assignment for key in self.layout.keys
         }
+        if self.layout.label == "matrix" and self.matrix_layout is not None:
+            self.matrix_layout = Layout.from_dict(self.layout.to_dict())
         new_layout = Layout.from_dict(layout.to_dict())
         for key in new_layout.keys:
-            key.assignment = previous_assignments.get(key.key_id)
+            if key.key_id in previous_assignments:
+                key.assignment = previous_assignments[key.key_id]
 
         self._install_layout(new_layout)
         self._set_dirty(True)
@@ -475,9 +985,14 @@ class Keyboard75Window(QMainWindow):
         self.clear_button.setEnabled(False)
         self.inspector_key_id.setText("Key ID: Select a key")
         self.inspector_position.setText("Position: —")
+        self.matrix_key_panel.setVisible(False)
+        self.matrix_edit_warning.clear()
 
         old_grid = self.key_grid_container
         self.layout = new_layout
+        self.matrix_pinmap_action.setEnabled(
+            self.layout.label == "matrix" and self.matrix_config is not None
+        )
         self.key_grid_container = self._build_key_grid()
         self.content_layout.replaceWidget(old_grid, self.key_grid_container)
         old_grid.deleteLater()
@@ -490,6 +1005,10 @@ class Keyboard75Window(QMainWindow):
                 for key in self.layout.keys
             },
         )
+        self.device.set_matrix_config(
+            self.matrix_config if self.layout.label == "matrix" else None
+        )
+        self.refresh_pressed_key_highlights()
         self._refresh_device_status()
         self._resize_for_layout()
 
@@ -536,6 +1055,49 @@ class Keyboard75Window(QMainWindow):
             return
         self.switch_layout(custom_layout)
 
+    def _open_matrix_layout_dialog(self) -> None:
+        dialog = MatrixSetupDialog(self.matrix_config, self)
+        self.matrix_setup_dialog = dialog
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        config = dialog.matrix_config()
+        ok, errors = config.validate()
+        if not ok:
+            QMessageBox.critical(
+                self, "Could not create matrix layout", "\n".join(errors)
+            )
+            return
+        generated = config.to_layout()
+        if self.matrix_layout is not None:
+            assignments = {key.key_id: key.assignment for key in self.matrix_layout.keys}
+            for key in generated.keys:
+                if key.key_id in assignments:
+                    key.assignment = assignments[key.key_id]
+        if not self.switch_layout(generated):
+            return
+        self.matrix_config = MatrixConfig.from_dict(config.to_dict())
+        self.matrix_layout = Layout.from_dict(self.layout.to_dict())
+        self.saved_matrix_action.setEnabled(True)
+        self.matrix_pinmap_action.setEnabled(True)
+
+    def open_matrix_pinmap(self) -> MatrixPinmapDialog | None:
+        """Open the GPIO editor for the active generated matrix."""
+        if self.layout.label != "matrix" or self.matrix_config is None:
+            return None
+        dialog = MatrixPinmapDialog(
+            self.matrix_config, self, changed=lambda: self._set_dirty(True)
+        )
+        self.matrix_pinmap_dialog = dialog
+        dialog.exec()
+        return dialog
+
+    def switch_to_matrix_layout(self) -> bool:
+        """Activate the last generated matrix without reopening its editor."""
+        if self.matrix_layout is None:
+            self._open_matrix_layout_dialog()
+            return self.matrix_layout is not None
+        return self.switch_layout(self.matrix_layout)
+
     def _build_inspector(self) -> QWidget:
         inspector = QFrame(self)
         inspector.setObjectName("keyInspector")
@@ -547,6 +1109,67 @@ class Keyboard75Window(QMainWindow):
         heading.setStyleSheet("font-size: 17px; font-weight: 600;")
         self.inspector_key_id = QLabel("Key ID: Select a key", inspector)
         self.inspector_position = QLabel("Position: —", inspector)
+
+        self.matrix_key_panel = QFrame(inspector)
+        self.matrix_key_panel.setObjectName("matrixKeyPanel")
+        self.matrix_key_panel.setFrameShape(QFrame.Shape.StyledPanel)
+        matrix_form = QFormLayout(self.matrix_key_panel)
+        matrix_form.setContentsMargins(9, 9, 9, 9)
+        matrix_form.setSpacing(5)
+        self.matrix_selected_key_label = QLabel(
+            "Selected matrix key: —", self.matrix_key_panel
+        )
+        self.matrix_selected_key_label.setObjectName("matrixSelectedKeyLabel")
+        self.matrix_selected_cell_label = QLabel(
+            "Grid cell: —", self.matrix_key_panel
+        )
+        self.matrix_selected_cell_label.setObjectName("matrixSelectedCellLabel")
+        matrix_form.addRow(self.matrix_selected_key_label)
+        matrix_form.addRow(self.matrix_selected_cell_label)
+        self.matrix_label_input = QLineEdit(self.matrix_key_panel)
+        self.matrix_label_input.setObjectName("matrixKeyLabelInput")
+        matrix_form.addRow("Display label", self.matrix_label_input)
+        self.matrix_width_input = QComboBox(self.matrix_key_panel)
+        self.matrix_width_input.setObjectName("matrixKeyWidthCombo")
+        for half_units in WIDTH_PRESETS_HALF_UNITS:
+            self.matrix_width_input.addItem(f"{half_units / 2:g}u", half_units)
+        matrix_form.addRow("Width", self.matrix_width_input)
+        self.matrix_row_input = QSpinBox(self.matrix_key_panel)
+        self.matrix_row_input.setObjectName("matrixKeyRowInput")
+        self.matrix_col_input = QSpinBox(self.matrix_key_panel)
+        self.matrix_col_input.setObjectName("matrixKeyColumnInput")
+        matrix_form.addRow("Row (0-based)", self.matrix_row_input)
+        matrix_form.addRow("Column (0-based)", self.matrix_col_input)
+        self.matrix_move_button = QPushButton("Move key", self.matrix_key_panel)
+        self.matrix_move_button.setObjectName("matrixKeyMoveButton")
+        matrix_form.addRow(self.matrix_move_button)
+        self.matrix_dx_input = QSpinBox(self.matrix_key_panel)
+        self.matrix_dx_input.setObjectName("matrixKeyVisualXOffsetInput")
+        self.matrix_dx_input.setRange(-256, 256)
+        self.matrix_dy_input = QSpinBox(self.matrix_key_panel)
+        self.matrix_dy_input.setObjectName("matrixKeyVisualYOffsetInput")
+        self.matrix_dy_input.setRange(-256, 256)
+        matrix_form.addRow("Visual X offset (0.5u)", self.matrix_dx_input)
+        matrix_form.addRow("Visual Y offset (0.5u)", self.matrix_dy_input)
+        self.matrix_position_button = QPushButton(
+            "Apply visual position", self.matrix_key_panel
+        )
+        self.matrix_position_button.setObjectName("matrixKeyVisualPositionButton")
+        matrix_form.addRow(self.matrix_position_button)
+        self.matrix_reset_button = QPushButton(
+            "Reset appearance to defaults", self.matrix_key_panel
+        )
+        self.matrix_reset_button.setObjectName("matrixKeyResetButton")
+        self.matrix_reset_button.setToolTip(
+            "Reset this key's label, width, and visual offsets; keep its cell and action"
+        )
+        matrix_form.addRow(self.matrix_reset_button)
+        self.matrix_edit_warning = QLabel(self.matrix_key_panel)
+        self.matrix_edit_warning.setObjectName("matrixKeyEditWarning")
+        self.matrix_edit_warning.setWordWrap(True)
+        self.matrix_edit_warning.setStyleSheet("color: #e1b866;")
+        matrix_form.addRow(self.matrix_edit_warning)
+        self.matrix_key_panel.setVisible(False)
 
         assignment_label = QLabel("Action", inspector)
         self.action_type_combo = QComboBox(inspector)
@@ -637,6 +1260,7 @@ class Keyboard75Window(QMainWindow):
         layout.addSpacing(8)
         layout.addWidget(self.inspector_key_id)
         layout.addWidget(self.inspector_position)
+        layout.addWidget(self.matrix_key_panel)
         layout.addSpacing(12)
         layout.addWidget(assignment_label)
         layout.addWidget(self.action_type_combo)
@@ -648,6 +1272,17 @@ class Keyboard75Window(QMainWindow):
         layout.addStretch()
         self.action_type_combo.currentIndexChanged.connect(
             self._action_type_changed
+        )
+        self.matrix_label_input.textChanged.connect(self._matrix_label_changed)
+        self.matrix_width_input.currentIndexChanged.connect(
+            self._matrix_width_changed
+        )
+        self.matrix_move_button.clicked.connect(self.move_selected_matrix_key)
+        self.matrix_position_button.clicked.connect(
+            self.apply_selected_matrix_visual_offset
+        )
+        self.matrix_reset_button.clicked.connect(
+            self.reset_selected_matrix_key_appearance
         )
         self._loading_action_editor = False
         self._update_action_editor_visibility()
@@ -702,18 +1337,239 @@ class Keyboard75Window(QMainWindow):
 
     @classmethod
     def _button_text(cls, key: Key) -> str:
-        label = cls._assignment_label(key.assignment)
-        return key.key_id if label is None else f"{key.key_id}\n{label}"
+        assignment_label = cls._assignment_label(key.assignment)
+        base_label = key.label or key.key_id
+        return (
+            base_label
+            if assignment_label is None
+            else f"{base_label}\n{assignment_label}"
+        )
 
     def _refresh_keycap(self, key: Key) -> None:
         button = self.key_widgets[key.key_id]
-        label = self._assignment_label(key.assignment)
+        assignment_label = self._assignment_label(key.assignment)
         button.setText(self._button_text(key))
-        button.setToolTip(key.key_id if label is None else f"{key.key_id}: {label}")
+        tooltip_parts = [key.key_id]
+        if key.label:
+            tooltip_parts.append(key.label)
+        if assignment_label is not None:
+            tooltip_parts.append(assignment_label)
+        button.setToolTip(": ".join(tooltip_parts))
         font = button.font()
-        label_length = len(label or key.key_id)
+        label_length = max(len(key.label or key.key_id), len(assignment_label or ""))
         font.setPointSize(7 if label_length > 12 else 8 if label_length > 8 else 9)
         button.setFont(font)
+
+    def refresh_pressed_key_highlights(self) -> None:
+        """Apply simulated device press state to the matching visible keycaps."""
+        pressed_key_ids = self.device.get_pressed_key_ids()
+        for key_id, button in self.key_widgets.items():
+            pressed = key_id in pressed_key_ids
+            button.setProperty("devicePressed", pressed)
+            button.setDown(pressed)
+            button.style().unpolish(button)
+            button.style().polish(button)
+            button.update()
+
+    def _selected_matrix_cell(self) -> tuple[int, int] | None:
+        if (
+            self.selected_key is None
+            or self.layout.label != "matrix"
+            or self.matrix_config is None
+        ):
+            return None
+        cell = (self.selected_key.y, self.selected_key.x)
+        return cell if cell in self.matrix_config.switches else None
+
+    def _load_matrix_key_editor(self, key: Key) -> None:
+        is_matrix_key = (
+            self.layout.label == "matrix" and self.matrix_config is not None
+        )
+        self.matrix_key_panel.setVisible(is_matrix_key)
+        if not is_matrix_key:
+            self.matrix_edit_warning.clear()
+            return
+        cell = (key.y, key.x)
+        self.matrix_selected_key_label.setText(f"Selected matrix key: {key.key_id}")
+        self.matrix_selected_cell_label.setText(
+            f"Grid cell: row {cell[0]}, column {cell[1]}"
+        )
+        self._loading_matrix_editor = True
+        self.matrix_label_input.setText(self.matrix_config.label_for(cell))
+        self._set_combo_data(
+            self.matrix_width_input, self.matrix_config.width_for(cell)
+        )
+        # Keep invalid values enterable so the move action can reject them with
+        # an explicit message instead of silently clamping to a different cell.
+        self.matrix_row_input.setRange(-1, 999)
+        self.matrix_col_input.setRange(-1, 999)
+        self.matrix_row_input.setValue(cell[0])
+        self.matrix_col_input.setValue(cell[1])
+        dx, dy = self.matrix_config.visual_offset_for(cell)
+        self.matrix_dx_input.setValue(dx)
+        self.matrix_dy_input.setValue(dy)
+        self._loading_matrix_editor = False
+        self._show_matrix_overflow_warning()
+
+    def _matrix_label_changed(self, label: str) -> None:
+        if self._loading_matrix_editor:
+            return
+        cell = self._selected_matrix_cell()
+        if cell is None:
+            return
+        if label:
+            self.matrix_config.key_labels[cell] = label
+        else:
+            self.matrix_config.key_labels.pop(cell, None)
+        self._regenerate_matrix_layout(cell)
+
+    def _matrix_width_changed(self) -> None:
+        if self._loading_matrix_editor:
+            return
+        cell = self._selected_matrix_cell()
+        if cell is None:
+            return
+        half_units = self.matrix_width_input.currentData()
+        if half_units == DEFAULT_WIDTH_HALF_UNITS:
+            self.matrix_config.key_widths.pop(cell, None)
+        else:
+            self.matrix_config.key_widths[cell] = half_units
+        self._regenerate_matrix_layout(cell)
+
+    def _show_matrix_overflow_warning(self) -> None:
+        if self.matrix_config is None:
+            self.matrix_edit_warning.clear()
+            return
+        overflowing_rows = sorted(
+            {
+                row
+                for row, column in self.matrix_config.switches
+                if column * 2
+                + self.matrix_config.visual_offset_for((row, column))[0]
+                + self.matrix_config.width_for((row, column))
+                > self.matrix_config.cols * 2
+            }
+        )
+        generated = self.matrix_config.to_layout(self.layout.name or "Matrix")
+        overlap_count = len(generated.keys) - len(generated.render_keys())
+        if overflowing_rows:
+            row_list = ", ".join(str(row) for row in overflowing_rows)
+            message = f"Warning: key width overflows matrix row {row_list}."
+            self.matrix_edit_warning.setText(message)
+            self.statusBar().showMessage(message, 5000)
+        elif overlap_count:
+            message = (
+                f"{overlap_count} overlapping key(s) are occluded by the visible cap."
+            )
+            self.matrix_edit_warning.setText(message)
+            self.statusBar().showMessage(message, 5000)
+        else:
+            self.matrix_edit_warning.clear()
+
+    def apply_selected_matrix_visual_offset(self) -> bool:
+        """Apply a visual-only offset without changing the electrical cell/ID."""
+        cell = self._selected_matrix_cell()
+        if cell is None or self.matrix_config is None:
+            return False
+        offset = (self.matrix_dx_input.value(), self.matrix_dy_input.value())
+        if offset == (0, 0):
+            self.matrix_config.key_visual_offsets.pop(cell, None)
+        else:
+            self.matrix_config.key_visual_offsets[cell] = offset
+        self._regenerate_matrix_layout(cell)
+        return True
+
+    def reset_selected_matrix_key_appearance(self) -> bool:
+        """Reset selected-key presentation without changing its cell or action."""
+        cell = self._selected_matrix_cell()
+        if cell is None or self.matrix_config is None:
+            return False
+        self.matrix_config.key_labels.pop(cell, None)
+        self.matrix_config.key_widths.pop(cell, None)
+        self.matrix_config.key_visual_offsets.pop(cell, None)
+        self._regenerate_matrix_layout(cell)
+        return True
+
+    def _regenerate_matrix_layout(
+        self,
+        selected_cell: tuple[int, int],
+        moved_from: tuple[int, int] | None = None,
+    ) -> None:
+        """Regenerate the matrix view from its authoritative config."""
+        if self.matrix_config is None:
+            return
+        assignments = {key.key_id: key.assignment for key in self.layout.keys}
+        if moved_from is not None:
+            old_id = f"MX-{moved_from[0]:02d}-{moved_from[1]:02d}"
+            new_id = f"MX-{selected_cell[0]:02d}-{selected_cell[1]:02d}"
+            assignments[new_id] = assignments.pop(old_id, None)
+        generated = self.matrix_config.to_layout(self.layout.name or "Matrix")
+        for key in generated.keys:
+            if key.key_id in assignments:
+                key.assignment = assignments[key.key_id]
+        self.matrix_layout = Layout.from_dict(generated.to_dict())
+        self._install_layout(generated)
+        selected_id = self.matrix_config.key_id_for_cell(selected_cell)
+        selected_key = next(
+            (key for key in self.layout.keys if key.key_id == selected_id), None
+        )
+        if selected_key is not None and selected_key.key_id in self.key_widgets:
+            self.select_key(selected_key)
+        self._set_dirty(True)
+
+    def move_selected_matrix_key(self) -> bool:
+        """Move the selected switch to an empty in-bounds matrix cell."""
+        old_cell = self._selected_matrix_cell()
+        if old_cell is None or self.matrix_config is None:
+            return False
+        new_cell = (self.matrix_row_input.value(), self.matrix_col_input.value())
+        if new_cell == old_cell:
+            return True
+        if not (
+            0 <= new_cell[0] < self.matrix_config.rows
+            and 0 <= new_cell[1] < self.matrix_config.cols
+        ):
+            message = "The destination cell is outside the matrix bounds."
+            QMessageBox.warning(self, "Could not move matrix key", message)
+            self.statusBar().showMessage(message, 5000)
+            self._load_matrix_key_editor(self.selected_key)
+            return False
+        if new_cell in self.matrix_config.switches:
+            message = (
+                f"Matrix cell ({new_cell[0]}, {new_cell[1]}) is already occupied."
+            )
+            QMessageBox.warning(self, "Could not move matrix key", message)
+            self.statusBar().showMessage(message, 5000)
+            self._load_matrix_key_editor(self.selected_key)
+            return False
+
+        width = self.matrix_config.key_widths.pop(old_cell, None)
+        label = self.matrix_config.key_labels.pop(old_cell, None)
+        visual_offset = self.matrix_config.key_visual_offsets.pop(old_cell, None)
+        self.matrix_config.switches.remove(old_cell)
+        self.matrix_config.switches.add(new_cell)
+        if width is not None:
+            self.matrix_config.key_widths[new_cell] = width
+        if label is not None:
+            self.matrix_config.key_labels[new_cell] = label
+        if visual_offset is not None:
+            self.matrix_config.key_visual_offsets[new_cell] = visual_offset
+        self._move_profile_assignment(old_cell, new_cell)
+        self._regenerate_matrix_layout(new_cell, moved_from=old_cell)
+        return True
+
+    def _move_profile_assignment(
+        self, old_cell: tuple[int, int], new_cell: tuple[int, int]
+    ) -> None:
+        if self.profile is None:
+            return
+        keys = self.profile.get("keys")
+        if not isinstance(keys, dict):
+            return
+        old_id = f"MX-{old_cell[0]:02d}-{old_cell[1]:02d}"
+        new_id = f"MX-{new_cell[0]:02d}-{new_cell[1]:02d}"
+        if old_id in keys:
+            keys[new_id] = keys.pop(old_id)
 
     def _set_action_editor_enabled(self, enabled: bool) -> None:
         self.action_type_combo.setEnabled(enabled)
@@ -761,7 +1617,7 @@ class Keyboard75Window(QMainWindow):
         self.media_key_panel.setVisible(action_type == "media")
 
     @staticmethod
-    def _set_combo_data(combo: QComboBox, value: str) -> None:
+    def _set_combo_data(combo: QComboBox, value: Any) -> None:
         index = combo.findData(value)
         if index >= 0:
             combo.setCurrentIndex(index)
@@ -811,15 +1667,22 @@ class Keyboard75Window(QMainWindow):
 
     def select_key(self, key: Key) -> None:
         """Select *key* and populate the inspector with its current values."""
-        if self.selected_key is not None:
+        if (
+            self.selected_key is not None
+            and self.selected_key.key_id in self.key_widgets
+        ):
             self.key_widgets[self.selected_key.key_id].setChecked(False)
 
         self.selected_key = key
         self.key_widgets[key.key_id].setChecked(True)
         self.inspector_key_id.setText(f"Key ID: {key.key_id}")
+        width_u = key.w / 2 if self.layout.label == "matrix" else key.w
+        visual_x = key.x + key.dx / 2 if self.layout.label == "matrix" else key.x
+        visual_y = key.y + key.dy / 2 if self.layout.label == "matrix" else key.y
         self.inspector_position.setText(
-            f"Position: x={key.x}, y={key.y} ({key.w}u × {key.h}u)"
+            f"Position: x={visual_x:g}, y={visual_y:g} ({width_u:g}u × {key.h}u)"
         )
+        self._load_matrix_key_editor(key)
         self._load_action_into_editor(self._action_from_assignment(key.assignment))
         self._set_action_editor_enabled(True)
         self.apply_button.setEnabled(True)
@@ -1048,6 +1911,7 @@ class Keyboard75Window(QMainWindow):
             self.layout,
             assignments,
             self.current_profile_path,
+            self.matrix_config if self.layout.label == "matrix" else None,
         )
         saved_path = save_project_file(target, document)
         self.profile = document
@@ -1064,6 +1928,20 @@ class Keyboard75Window(QMainWindow):
             return False
         loaded = load_project_file(path, fallback_layout=self.layout)
         self._install_layout(Layout.from_dict(loaded.layout.to_dict()))
+        self.matrix_config = (
+            MatrixConfig.from_dict(loaded.matrix_config.to_dict())
+            if loaded.matrix_config is not None
+            else None
+        )
+        self.matrix_layout = (
+            Layout.from_dict(loaded.layout.to_dict())
+            if loaded.matrix_config is not None
+            else None
+        )
+        self.saved_matrix_action.setEnabled(self.matrix_layout is not None)
+        self.matrix_pinmap_action.setEnabled(
+            self.layout.label == "matrix" and self.matrix_config is not None
+        )
         self.profile = loaded.profile
         self.current_profile_path = (
             Path(loaded.profile_path) if loaded.profile_path is not None else None

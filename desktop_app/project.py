@@ -1,4 +1,4 @@
-"""Keyboard project persistence built on the version 1 profile format."""
+"""Keyboard project persistence with additive matrix-layout support."""
 
 from __future__ import annotations
 
@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .layout_model import Key, Layout
+from .matrix_model import MatrixConfig, MatrixDataError
 from .profile import ProfileError, create_profile, validate_profile
 
 
 PROJECT_TYPE = "/project-project"
-PROJECT_VERSION = 1
+PROJECT_VERSION = 3
+LEGACY_PROJECT_VERSIONS = frozenset({1, 2})
 PROJECT_SUFFIX = ".kb75.json"
 PROJECTS_DIRECTORY = Path(__file__).resolve().parents[1] / "profiles"
 
@@ -30,9 +32,10 @@ class KeyboardProject:
     layout: Layout
     profile: dict[str, Any]
     profile_path: str | None = None
+    matrix_config: MatrixConfig | None = None
 
     @property
-    def assignments(self) -> dict[str, str]:
+    def assignments(self) -> dict[str, Any]:
         return {
             key_id: key_data["assignment"]
             for key_id, key_data in self.profile["keys"].items()
@@ -65,22 +68,27 @@ def list_project_files(
 
 
 def _layout_block(layout: Layout) -> dict[str, Any]:
+    def geometry(key: Key) -> dict[str, Any]:
+        item = {
+            "key_id": key.key_id,
+            "x": key.x,
+            "y": key.y,
+            "w": key.w,
+            "h": key.h,
+            "label": key.label,
+        }
+        if key.dx or key.dy:
+            item["dx"] = key.dx
+            item["dy"] = key.dy
+        return item
+
     return {
         "name": layout.name,
         "key_count": layout.key_count,
         "cols": layout.cols,
         "rows": layout.rows,
         "label": layout.label,
-        "keys": [
-            {
-                "key_id": key.key_id,
-                "x": key.x,
-                "y": key.y,
-                "w": key.w,
-                "h": key.h,
-            }
-            for key in layout.keys
-        ],
+        "keys": [geometry(key) for key in layout.keys],
     }
 
 
@@ -137,14 +145,17 @@ def _validate_layout_block(data: Any, profile: Mapping[str, Any]) -> Layout:
         key_id = item.get("key_id")
         x, y = item.get("x"), item.get("y")
         w, h = item.get("w", 1), item.get("h", 1)
+        dx, dy = item.get("dx", 0), item.get("dy", 0)
         if key_id not in profile["keys"] or key_id in seen_ids:
             raise ProjectError(
                 f"Project layout geometry has an unknown or duplicate key ID {key_id!r}"
             )
         if type(x) is not int or x < 0 or type(y) is not int or y < 0:
             raise ProjectError(f"Project layout position for {key_id} must be non-negative")
-        if type(w) is not int or w < 1 or type(h) is not int or h < 1:
+        if type(w) not in (int, float) or w < 1 or type(h) is not int or h < 1:
             raise ProjectError(f"Project layout size for {key_id} must be positive")
+        if type(dx) is not int or type(dy) is not int:
+            raise ProjectError(f"Project layout visual offset for {key_id} must be integer")
         if x + w > cols or y + h > rows:
             raise ProjectError(f"Project layout geometry for {key_id} is outside its grid")
         seen_ids.add(key_id)
@@ -156,6 +167,9 @@ def _validate_layout_block(data: Any, profile: Mapping[str, Any]) -> Layout:
                 w=w,
                 h=h,
                 assignment=profile["keys"][key_id]["assignment"],
+                label=item.get("label", ""),
+                dx=dx,
+                dy=dy,
             )
         )
 
@@ -170,15 +184,29 @@ def _validate_layout_block(data: Any, profile: Mapping[str, Any]) -> Layout:
 def create_project(
     name: str,
     layout: Layout,
-    assignments: Mapping[str, str],
+    assignments: Mapping[str, Any],
     profile_path: str | Path | None = None,
+    matrix_config: MatrixConfig | None = None,
 ) -> dict[str, Any]:
-    """Create a project document containing a compatible v1 profile."""
+    """Create a v3 project document containing a compatible v2 profile."""
     if not isinstance(name, str) or not name.strip():
         raise ProjectError("Project name must be a non-empty string")
     key_ids = [key.key_id for key in layout.keys]
     if set(assignments) != set(key_ids):
         raise ProjectError("Project assignments must exactly match the layout key set")
+    if matrix_config is not None:
+        try:
+            matrix_config = MatrixConfig.from_dict(matrix_config.to_dict())
+        except MatrixDataError as error:
+            raise ProjectError(str(error)) from error
+        if layout.label != "matrix":
+            raise ProjectError("A matrix config requires a matrix layout")
+        if set(matrix_config.keys()) != set(key_ids):
+            raise ProjectError(
+                "Project matrix switches must exactly match the layout key set"
+            )
+    elif layout.label == "matrix":
+        raise ProjectError("Matrix projects must include a matrix config")
     document = create_profile(assignments)
     document.update(
         {
@@ -190,6 +218,8 @@ def create_project(
     )
     if profile_path is not None:
         document["profile_path"] = str(profile_path)
+    if matrix_config is not None:
+        document["matrix"] = matrix_config.to_dict()
     validate_project(document)
     return document
 
@@ -221,9 +251,13 @@ def validate_project(
     if marker != PROJECT_TYPE:
         raise ProjectError(f"Unknown project type {marker!r}; expected {PROJECT_TYPE!r}")
     version = document.get("project_version")
-    if type(version) is not int or version != PROJECT_VERSION:
+    if type(version) is not int or version not in {
+        *LEGACY_PROJECT_VERSIONS,
+        PROJECT_VERSION,
+    }:
         raise ProjectError(
-            f"Unsupported project_version {version!r}; expected {PROJECT_VERSION}"
+            f"Unsupported project_version {version!r}; expected 1, 2, or "
+            f"{PROJECT_VERSION}"
         )
     name = document.get("name")
     if not isinstance(name, str) or not name.strip():
@@ -236,12 +270,46 @@ def validate_project(
         profile = validate_profile(document)
     except ProfileError as error:
         raise ProjectError(str(error)) from error
-    layout = _validate_layout_block(document.get("layout"), profile)
+    matrix_config = None
+    matrix_data = document.get("matrix")
+    if matrix_data is not None:
+        try:
+            matrix_config = MatrixConfig.from_dict(matrix_data)
+        except MatrixDataError as error:
+            raise ProjectError(f"Invalid project matrix: {error}") from error
+
+    if matrix_config is None:
+        layout = _validate_layout_block(document.get("layout"), profile)
+        if version == PROJECT_VERSION and layout.label == "matrix":
+            raise ProjectError("Matrix project is missing field 'matrix'")
+    else:
+        layout_data = document.get("layout")
+        if not isinstance(layout_data, dict):
+            raise ProjectError("Project field 'layout' must be a JSON object")
+        name_value = layout_data.get("name")
+        if not isinstance(name_value, str) or not name_value.strip():
+            raise ProjectError("Project layout name must be a non-empty string")
+        if layout_data.get("label") != "matrix":
+            raise ProjectError("Project matrix layout label must be 'matrix'")
+        if layout_data.get("rows") != matrix_config.rows:
+            raise ProjectError("Project layout rows do not match the matrix config")
+        if layout_data.get("cols") != matrix_config.cols:
+            raise ProjectError("Project layout cols do not match the matrix config")
+        if layout_data.get("key_count") != len(matrix_config.switches):
+            raise ProjectError("Project layout key_count does not match matrix switches")
+        expected_ids = set(matrix_config.keys())
+        if set(profile["keys"]) != expected_ids:
+            raise ProjectError("Project profile key set does not match matrix switches")
+        layout = matrix_config.to_layout(name=name_value.strip())
+        for key in layout.keys:
+            key.assignment = profile["keys"][key.key_id]["assignment"]
     try:
         validate_profile(profile, (key.key_id for key in layout.keys))
     except ProfileError as error:
         raise ProjectError(str(error)) from error
-    return KeyboardProject(name.strip(), layout, deepcopy(profile), profile_path)
+    return KeyboardProject(
+        name.strip(), layout, deepcopy(profile), profile_path, matrix_config
+    )
 
 
 def load_project(
@@ -278,6 +346,10 @@ def save_project(path: str | Path, document: Mapping[str, Any]) -> Path:
     )
     if project.profile_path is not None:
         output["profile_path"] = project.profile_path
+    if project.matrix_config is not None:
+        output["matrix"] = project.matrix_config.to_dict()
+    else:
+        output.pop("matrix", None)
     with target.open("w", encoding="utf-8") as project_file:
         json.dump(output, project_file, indent=2)
         project_file.write("\n")

@@ -8,3 +8,5 @@ profiles/*.bak
 
 # User keyboard projects (local data, not source)
 profiles/
+test.json
+trial

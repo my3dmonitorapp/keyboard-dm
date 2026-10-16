@@ -1,6 +1,6 @@
 # Keyboard DM Desktop Application
 
-Milestone S1.2 is a universal PySide6 keyboard configurator for built-in 6-, 9-, 12-, and 75-key layouts plus custom grids from 2 to 500 keys. It communicates only with a deterministic simulated ESP32-S3 device: the application makes no real USB, BLE, network, firmware, or hardware calls.
+Milestone M1 extends the PySide6 keyboard configurator with sparse electrical-matrix layouts alongside the built-in 6-, 9-, 12-, and 75-key layouts and custom grids. It communicates only with a deterministic simulated ESP32-S3 device: the application makes no real USB, BLE, network, firmware, or hardware calls.
 
 ## Setup
 
@@ -26,6 +26,14 @@ Switching layouts preserves assignments for shared key IDs and initializes newly
 
 Select a key, then use the inspector's **Action** menu to choose **Single Key**, **Modifier Key**, **Keyboard Shortcut**, **Media Key**, or **None**. Choose the key/media control or sided modifier checkboxes shown for that type, then select **Apply**. **Clear** removes the assignment. Shortcuts are entered manually with one to four sided modifier checkboxes and one main-key menu; press-to-record is not part of S1.2.
 
+### Matrix layout
+
+Choose **Layout → Matrix...** to open `MatrixSetupDialog`, enter the row and column counts, select the populated switch cells, optionally set selected-cell widths, and generate the layout. On the generated layout, select a key to edit its display label and width or move it to an empty row/column cell. Stable matrix key IDs use the form `MX-rr-cc`.
+
+Choose **Layout → GPIO pinmap...** to assign row and column pins independently. The dialog validates entries live against its configurable minimum/maximum range and rejects duplicate pins across all row and column lines. These values are project data only; they are not a verified hardware pinmap and are never written to a device.
+
+Matrix presses can be simulated without hardware through `window.device.press_matrix_key(row, column)` and `release_matrix_key(row, column)`; the matching visible keycap follows the pressed state. Save the matrix with **File → Projects → Save Project** and reopen it from **Open Project** to restore switches, geometry, labels, pins, and typed assignments. The `--smoke` flow described below exercises matrix conversion, v3 save/reload, and press/release simulation headlessly.
+
 ## Local profiles and hardware configuration
 
 **File → Save Local Profile...** writes a version 2 JSON file with typed action payloads on the local computer. A missing `.json` suffix is added automatically. **File → Open Local Profile...** accepts the profile only when its key IDs exactly match the active layout; a mismatch displays a clear error and leaves the current assignments intact. Version 1 profiles are migrated on load, with unknown assignment text preserved verbatim.
@@ -36,13 +44,13 @@ The title and status bar show the current local profile and `(unsaved)` state. C
 
 ## Keyboard projects
 
-A project combines a name, layout metadata, geometry, and version 2 typed assignments in one `*.kb75.json` file. Use **File → Projects → New Project...**, **Save Project**, and **Open Project** to manage projects. Opening a project restores both its layout and assignments and re-synchronizes the simulated device's key set.
+A project combines a name, layout metadata, geometry, and version 2 typed assignments in one `*.kb75.json` file. Project schema version 3 additionally persists a matrix configuration when the active layout is matrix-generated. Use **File → Projects → New Project...**, **Save Project**, and **Open Project** to manage projects. Opening a project restores its layout and assignments, restores matrix data when present, and re-synchronizes the simulated device's key set.
 
 Project and profile user data belongs in the repository's ignored `profiles/` directory. These files are local working data and are not source-controlled.
 
 ## Smoke test
 
-The smoke flow verifies the real GUI, a typed 75-key shortcut profile save/reopen and JSON payload, simulated USB preference, a switch to the 12-key layout, and a 12-key project save/reload:
+The smoke flow verifies the real GUI, existing 75- and 12-key flows, 3×4 and sparse 5×15 matrix conversion, a version 3 matrix project round-trip with typed actions and pin/width/label data, and a simulated matrix press/release:
 
 ```bash
 python -m desktop_app --smoke

@@ -1,8 +1,8 @@
 # Keyboard DM Product Specification
 
-Version: 1.1
-Date: 2026-10-11  
-Status: Phase 0 baseline, updated by BD-1
+Version: 1.2
+Date: 2026-10-16
+Status: Phase 0 hardware baseline plus desktop application M1
 
 ## 1. Product definition
 
@@ -44,7 +44,7 @@ The standard ESP32 is the primary implementation target. The desktop configurato
 - Native USB HID for the 75-key standard-ESP32 target.
 - PCB or schematic design.
 - Exact matrix wiring or diode orientation.
-- GPIO assignments or pinmaps.
+- A verified physical GPIO assignment or hardware pinmap; desktop matrix-project pins are user-entered data only.
 - A final standard-ESP32 board/module or flash capacity.
 - A final RGB LED type, count, topology, or electrical budget.
 - A final battery, charger, protection circuit, connector, capacity, or runtime target.
@@ -87,7 +87,16 @@ The standard ESP32 is the primary implementation target. The desktop configurato
 - Factory defaults and a user-accessible reset behavior are required; their exact interaction is **TBD**.
 - Limits for macro length, profile count, and configuration size are **TBD** pending memory selection and product decisions.
 
-### 5.3 RGB lighting
+### 5.3 Desktop matrix layouts
+
+- The desktop application accepts configurable matrices from 1–32 rows by 1–128 columns. Switches are sparse populated intersections, so rows may contain unequal key counts.
+- Each populated cell receives a stable `MX-rr-cc` key ID and may store a display label and a width in 0.5-unit increments within the model's supported range.
+- Row and column pins are independent nullable entries. A configurable inclusive minimum/maximum range and uniqueness across all assigned row and column pins are validated before a matrix is accepted.
+- Pin values in a desktop project describe user configuration only. They do not select, verify, or write GPIOs on physical hardware.
+- The deterministic simulated device translates occupied `(row, column)` press/release events to matrix key IDs, and the GUI highlights the corresponding keycap without hardware access.
+- Project schema version 3 persists the matrix dimensions, sparse switches, widths, labels, row/column pins, range, layout, and typed assignments. Existing version 1 and 2 non-matrix projects remain loadable.
+
+### 5.4 RGB lighting
 
 - Lighting shall be configurable independently of normal key reporting if supported by the confirmed LED hardware.
 - A safe default state and a method to disable lighting shall be provided when RGB is included.
@@ -131,6 +140,7 @@ Targets and test procedures that depend on unfinished hardware remain gated and 
 
 ## 9. Change note
 
+- **2026-10-16 — v1.2 / desktop M1:** Documented the implemented board-independent matrix editor, validation, simulation, and project-v3 persistence. User-entered pins remain local project data and do not resolve the physical wiring or hardware GPIO decisions.
 - **2026-10-11 — v1.1:** Adopted [BD-1](hardware-decision-2026-10-11-bt-first.md): changed the primary MCU to a standard ESP32 (ESP32-WROOM-32 DevKit class, exact part **TBD**), made BLE HID the primary keyboard transport, removed native USB HID as a 75-key requirement, retained USB serial for programming/updates/configuration, and established board-independent capability support with C3/S2/S3 deferred. No pin-level decisions are made by this specification.
 - **2026-10-11 — v1.0:** Established the first product specification in this repository. Confirmed the ESP32-S3 as the sole target MCU, replacing the previously planned standard ESP32. No pin-level decisions are made by this specification. This baseline is superseded by BD-1 and v1.1.
 - **2026-10-11 — S1.2 note:** Documented the desktop typed-action model and version 2 local-profile schema; this does not authorize or define firmware transport.

@@ -33,7 +33,9 @@ DEVICE = "/project-esp32s3"
 # Retained for the S1.1 simulated-device compatibility surface. Profile v2
 # actions themselves are validated by the action model, not this text limit.
 MAX_ASSIGNMENT_LENGTH = 32
-KEY_ID_PATTERN = re.compile(r"^K\d{2,3}$")
+KEY_ID_PATTERN = re.compile(
+    r"^(?:K\d{2,3}|MX-(?:0\d|[12]\d|3[01])-(?:0\d|[1-9]\d|1[01]\d|12[0-7]))$"
+)
 
 
 class ProfileError(ValueError):
@@ -144,7 +146,8 @@ def _validate_common(profile: Mapping[str, Any]) -> dict[str, Any]:
     for key_id in keys:
         if not isinstance(key_id, str) or not KEY_ID_PATTERN.fullmatch(key_id):
             raise ProfileError(
-                f"Unknown profile key ID {key_id!r}; expected K followed by 2 or 3 digits"
+                f"Unknown profile key ID {key_id!r}; expected K followed by 2 or 3 "
+                "digits, or a canonical MX-rr-cc matrix ID"
             )
     return keys
 

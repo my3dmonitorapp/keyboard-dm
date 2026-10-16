@@ -21,3 +21,4 @@ Log:
 - 2026-10-16: T5 verified (independent 70-key 5x15 save/load round-trip, 3 typed action types preserved) + committed (4d9b6e8). Budget: 5/8 tasks.
 - 2026-10-16: T6 verified (independent device press/release + empty-cell rejection) + committed (a96809e). Budget: 6/8 tasks.
 - 2026-10-16: T7 verified (independent --smoke exit 0 + 206 tests) + committed ($(git rev-parse --short HEAD)). Budget: 7/8; 1 reserve held unused.
+- 2026-10-16: M1 complete. Branch pushed, PR open for review: https://github.com/my3dmonitorapp/keyboard-dm/pull/1 (not merged). 206 tests, smoke exit 0. Budget used: 7/8 tasks, 1 reserve unused, no correction spend.

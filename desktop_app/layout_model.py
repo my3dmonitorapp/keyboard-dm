@@ -20,6 +20,7 @@ class Key:
     w: int = 1
     h: int = 1
     assignment: str = "NONE"
+    label: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible representation of this key."""
@@ -30,6 +31,7 @@ class Key:
             "w": self.w,
             "h": self.h,
             "assignment": self.assignment,
+            "label": self.label,
         }
 
     @classmethod
@@ -42,6 +44,7 @@ class Key:
             w=data["w"],
             h=data["h"],
             assignment=data["assignment"],
+            label=data.get("label", ""),
         )
 
 

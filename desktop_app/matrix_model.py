@@ -323,6 +323,7 @@ def matrix_layout(config: MatrixConfig, name: str = "Matrix") -> Layout:
                 x=cell[1],
                 y=cell[0],
                 w=config.width_for(cell),
+                label=config.label_for(cell),
             )
             for cell in config._ordered_cells()
         ],

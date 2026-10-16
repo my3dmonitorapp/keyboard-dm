@@ -1689,6 +1689,7 @@ class Keyboard75Window(QMainWindow):
             self.layout,
             assignments,
             self.current_profile_path,
+            self.matrix_config if self.layout.label == "matrix" else None,
         )
         saved_path = save_project_file(target, document)
         self.profile = document
@@ -1705,6 +1706,20 @@ class Keyboard75Window(QMainWindow):
             return False
         loaded = load_project_file(path, fallback_layout=self.layout)
         self._install_layout(Layout.from_dict(loaded.layout.to_dict()))
+        self.matrix_config = (
+            MatrixConfig.from_dict(loaded.matrix_config.to_dict())
+            if loaded.matrix_config is not None
+            else None
+        )
+        self.matrix_layout = (
+            Layout.from_dict(loaded.layout.to_dict())
+            if loaded.matrix_config is not None
+            else None
+        )
+        self.saved_matrix_action.setEnabled(self.matrix_layout is not None)
+        self.matrix_pinmap_action.setEnabled(
+            self.layout.label == "matrix" and self.matrix_config is not None
+        )
         self.profile = loaded.profile
         self.current_profile_path = (
             Path(loaded.profile_path) if loaded.profile_path is not None else None

@@ -28,6 +28,7 @@ def _matrix_config() -> MatrixConfig:
         switches={(0, 0), (0, 3), (1, 1), (2, 0), (2, 2)},
         key_widths={(0, 0): 3, (0, 3): 1, (1, 1): 5, (2, 2): 12},
         key_labels={(0, 0): "Esc", (1, 1): "Copy", (2, 2): "Space"},
+        key_visual_offsets={(0, 0): (1, 0), (2, 2): (-2, 1)},
         row_pins=[0, 4, 8],
         column_pins=[12, 16, 20, 24],
         min_pin=0,
@@ -88,6 +89,28 @@ def test_matrix_project_two_round_trips_are_idempotent(tmp_path):
     assert second.matrix_config == config == first.matrix_config
     assert second.layout.to_dict() == first.layout.to_dict()
     assert second.assignments == first.assignments
+
+
+def test_pre_change_v3_matrix_defaults_to_computed_geometry(tmp_path):
+    config, document = _matrix_document()
+    document["matrix"].pop("key_visual_offsets")
+    for item in document["layout"]["keys"]:
+        item.pop("dx", None)
+        item.pop("dy", None)
+    expected = MatrixConfig.from_dict(document["matrix"]).to_layout("Sparse 3x4")
+    path = tmp_path / "old-v3.kb75.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    loaded = load_project(path)
+
+    assert loaded.matrix_config.key_visual_offsets == {}
+    assert loaded.layout.to_dict() == {
+        **expected.to_dict(),
+        "keys": [
+            {**key.to_dict(), "assignment": loaded.assignments[key.key_id]}
+            for key in expected.keys
+        ],
+    }
 
 
 @pytest.mark.parametrize("legacy_version", [1, 2])

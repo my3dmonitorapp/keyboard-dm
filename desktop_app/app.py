@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -50,6 +51,7 @@ from .matrix_model import (
     DEFAULT_WIDTH_HALF_UNITS,
     MAX_WIDTH_HALF_UNITS,
     MIN_WIDTH_HALF_UNITS,
+    WIDTH_PRESETS_HALF_UNITS,
     MatrixConfig,
 )
 from .profile import (
@@ -261,6 +263,9 @@ class MatrixSetupDialog(QDialog):
         self._switches = set(config.switches) if config is not None else set()
         self._key_widths = dict(config.key_widths) if config is not None else {}
         self._key_labels = dict(config.key_labels) if config is not None else {}
+        self._key_visual_offsets = (
+            dict(config.key_visual_offsets) if config is not None else {}
+        )
         self._row_pins = list(config.row_pins) if config is not None else []
         self._column_pins = list(config.column_pins) if config is not None else []
         self._min_pin = config.min_pin if config is not None else 0
@@ -306,9 +311,11 @@ class MatrixSetupDialog(QDialog):
 
         width_row = QHBoxLayout()
         width_row.addWidget(QLabel("Selected key width (half-units)", self))
-        self.width_input = QSpinBox(self)
+        self.width_input = QDoubleSpinBox(self)
         self.width_input.setObjectName("matrixKeyWidthInput")
         self.width_input.setRange(MIN_WIDTH_HALF_UNITS, MAX_WIDTH_HALF_UNITS)
+        self.width_input.setSingleStep(0.5)
+        self.width_input.setDecimals(1)
         self.width_input.setValue(DEFAULT_WIDTH_HALF_UNITS)
         self.width_input.setEnabled(False)
         self.width_input.valueChanged.connect(self._set_selected_width)
@@ -344,6 +351,11 @@ class MatrixSetupDialog(QDialog):
         self._key_labels = {
             cell: label
             for cell, label in self._key_labels.items()
+            if cell in self._switches
+        }
+        self._key_visual_offsets = {
+            cell: offset
+            for cell, offset in self._key_visual_offsets.items()
             if cell in self._switches
         }
         while self.grid_layout.count():
@@ -393,9 +405,10 @@ class MatrixSetupDialog(QDialog):
             self._switches.discard(cell)
             self._key_widths.pop(cell, None)
             self._key_labels.pop(cell, None)
+            self._key_visual_offsets.pop(cell, None)
             self.width_input.setEnabled(False)
 
-    def _set_selected_width(self, width: int) -> None:
+    def _set_selected_width(self, width: float) -> None:
         if self._selected_cell not in self._switches:
             return
         if width == DEFAULT_WIDTH_HALF_UNITS:
@@ -411,6 +424,7 @@ class MatrixSetupDialog(QDialog):
             switches=set(self._switches),
             key_widths=dict(self._key_widths),
             key_labels=dict(self._key_labels),
+            key_visual_offsets=dict(self._key_visual_offsets),
             row_pins=(self._row_pins + [None] * self.rows_input.value())[
                 : self.rows_input.value()
             ],
@@ -791,14 +805,25 @@ class Keyboard75Window(QMainWindow):
         grid.setHorizontalSpacing(spacing)
         grid.setVerticalSpacing(spacing)
 
-        for key in self.layout.keys:
+        render_keys = self.layout.render_keys()
+        matrix_column_shift = 0
+        matrix_row_shift = 0
+        if self.layout.label == "matrix" and render_keys:
+            matrix_column_shift = -min(
+                0, min(key.x * 4 + key.dx * 2 for key in render_keys)
+            )
+            matrix_row_shift = -min(
+                0, min(key.y * 2 + key.dy for key in render_keys)
+            )
+
+        for key in render_keys:
             button = QPushButton(self._button_text(key), grid_container)
             button.setObjectName(f"keyButton_{key.key_id}")
             button.setCheckable(True)
             if self.layout.label == "matrix":
-                half_unit_width = (key_width - spacing) / 2
+                width_u = key.w / 2
                 rendered_width = round(
-                    key.w * half_unit_width + max(0, key.w - 1) * spacing
+                    width_u * key_width + max(0, width_u - 1) * spacing
                 )
                 button.setFixedSize(rendered_width, key_height)
             else:
@@ -807,8 +832,14 @@ class Keyboard75Window(QMainWindow):
             button.clicked.connect(
                 lambda _checked=False, selected=key: self.select_key(selected)
             )
-            grid_column = key.x * 2 if self.layout.label == "matrix" else key.x
-            grid.addWidget(button, key.y, grid_column, key.h, key.w)
+            if self.layout.label == "matrix":
+                grid_column = key.x * 4 + key.dx * 2 + matrix_column_shift
+                grid_row = key.y * 2 + key.dy + matrix_row_shift
+                grid.addWidget(
+                    button, grid_row, grid_column, key.h * 2, round(key.w * 2)
+                )
+            else:
+                grid.addWidget(button, key.y, key.x, key.h, round(key.w))
             self.key_widgets[key.key_id] = button
             self._refresh_keycap(key)
 
@@ -1010,7 +1041,7 @@ class Keyboard75Window(QMainWindow):
         matrix_form.addRow("Display label", self.matrix_label_input)
         self.matrix_width_input = QComboBox(self.matrix_key_panel)
         self.matrix_width_input.setObjectName("matrixKeyWidthCombo")
-        for half_units in range(MIN_WIDTH_HALF_UNITS, MAX_WIDTH_HALF_UNITS + 1):
+        for half_units in WIDTH_PRESETS_HALF_UNITS:
             self.matrix_width_input.addItem(f"{half_units / 2:g}u", half_units)
         matrix_form.addRow("Width", self.matrix_width_input)
         self.matrix_row_input = QSpinBox(self.matrix_key_panel)
@@ -1022,6 +1053,19 @@ class Keyboard75Window(QMainWindow):
         self.matrix_move_button = QPushButton("Move key", self.matrix_key_panel)
         self.matrix_move_button.setObjectName("matrixKeyMoveButton")
         matrix_form.addRow(self.matrix_move_button)
+        self.matrix_dx_input = QSpinBox(self.matrix_key_panel)
+        self.matrix_dx_input.setObjectName("matrixKeyVisualXOffsetInput")
+        self.matrix_dx_input.setRange(-256, 256)
+        self.matrix_dy_input = QSpinBox(self.matrix_key_panel)
+        self.matrix_dy_input.setObjectName("matrixKeyVisualYOffsetInput")
+        self.matrix_dy_input.setRange(-256, 256)
+        matrix_form.addRow("Visual X offset (0.5u)", self.matrix_dx_input)
+        matrix_form.addRow("Visual Y offset (0.5u)", self.matrix_dy_input)
+        self.matrix_position_button = QPushButton(
+            "Apply visual position", self.matrix_key_panel
+        )
+        self.matrix_position_button.setObjectName("matrixKeyVisualPositionButton")
+        matrix_form.addRow(self.matrix_position_button)
         self.matrix_edit_warning = QLabel(self.matrix_key_panel)
         self.matrix_edit_warning.setObjectName("matrixKeyEditWarning")
         self.matrix_edit_warning.setWordWrap(True)
@@ -1136,6 +1180,9 @@ class Keyboard75Window(QMainWindow):
             self._matrix_width_changed
         )
         self.matrix_move_button.clicked.connect(self.move_selected_matrix_key)
+        self.matrix_position_button.clicked.connect(
+            self.apply_selected_matrix_visual_offset
+        )
         self._loading_action_editor = False
         self._update_action_editor_visibility()
         self._set_action_editor_enabled(False)
@@ -1253,6 +1300,9 @@ class Keyboard75Window(QMainWindow):
         self.matrix_col_input.setRange(-1, 999)
         self.matrix_row_input.setValue(cell[0])
         self.matrix_col_input.setValue(cell[1])
+        dx, dy = self.matrix_config.visual_offset_for(cell)
+        self.matrix_dx_input.setValue(dx)
+        self.matrix_dy_input.setValue(dy)
         self._loading_matrix_editor = False
         self._show_matrix_overflow_warning()
 
@@ -1289,17 +1339,40 @@ class Keyboard75Window(QMainWindow):
             {
                 row
                 for row, column in self.matrix_config.switches
-                if column * 2 + self.matrix_config.width_for((row, column))
+                if column * 2
+                + self.matrix_config.visual_offset_for((row, column))[0]
+                + self.matrix_config.width_for((row, column))
                 > self.matrix_config.cols * 2
             }
         )
+        generated = self.matrix_config.to_layout(self.layout.name or "Matrix")
+        overlap_count = len(generated.keys) - len(generated.render_keys())
         if overflowing_rows:
             row_list = ", ".join(str(row) for row in overflowing_rows)
             message = f"Warning: key width overflows matrix row {row_list}."
             self.matrix_edit_warning.setText(message)
             self.statusBar().showMessage(message, 5000)
+        elif overlap_count:
+            message = (
+                f"{overlap_count} overlapping key(s) are occluded by the visible cap."
+            )
+            self.matrix_edit_warning.setText(message)
+            self.statusBar().showMessage(message, 5000)
         else:
             self.matrix_edit_warning.clear()
+
+    def apply_selected_matrix_visual_offset(self) -> bool:
+        """Apply a visual-only offset without changing the electrical cell/ID."""
+        cell = self._selected_matrix_cell()
+        if cell is None or self.matrix_config is None:
+            return False
+        offset = (self.matrix_dx_input.value(), self.matrix_dy_input.value())
+        if offset == (0, 0):
+            self.matrix_config.key_visual_offsets.pop(cell, None)
+        else:
+            self.matrix_config.key_visual_offsets[cell] = offset
+        self._regenerate_matrix_layout(cell)
+        return True
 
     def _regenerate_matrix_layout(
         self,
@@ -1324,7 +1397,7 @@ class Keyboard75Window(QMainWindow):
         selected_key = next(
             (key for key in self.layout.keys if key.key_id == selected_id), None
         )
-        if selected_key is not None:
+        if selected_key is not None and selected_key.key_id in self.key_widgets:
             self.select_key(selected_key)
         self._set_dirty(True)
 
@@ -1356,12 +1429,15 @@ class Keyboard75Window(QMainWindow):
 
         width = self.matrix_config.key_widths.pop(old_cell, None)
         label = self.matrix_config.key_labels.pop(old_cell, None)
+        visual_offset = self.matrix_config.key_visual_offsets.pop(old_cell, None)
         self.matrix_config.switches.remove(old_cell)
         self.matrix_config.switches.add(new_cell)
         if width is not None:
             self.matrix_config.key_widths[new_cell] = width
         if label is not None:
             self.matrix_config.key_labels[new_cell] = label
+        if visual_offset is not None:
+            self.matrix_config.key_visual_offsets[new_cell] = visual_offset
         self._move_profile_assignment(old_cell, new_cell)
         self._regenerate_matrix_layout(new_cell, moved_from=old_cell)
         return True
@@ -1425,7 +1501,7 @@ class Keyboard75Window(QMainWindow):
         self.media_key_panel.setVisible(action_type == "media")
 
     @staticmethod
-    def _set_combo_data(combo: QComboBox, value: str) -> None:
+    def _set_combo_data(combo: QComboBox, value: Any) -> None:
         index = combo.findData(value)
         if index >= 0:
             combo.setCurrentIndex(index)
@@ -1475,15 +1551,20 @@ class Keyboard75Window(QMainWindow):
 
     def select_key(self, key: Key) -> None:
         """Select *key* and populate the inspector with its current values."""
-        if self.selected_key is not None:
+        if (
+            self.selected_key is not None
+            and self.selected_key.key_id in self.key_widgets
+        ):
             self.key_widgets[self.selected_key.key_id].setChecked(False)
 
         self.selected_key = key
         self.key_widgets[key.key_id].setChecked(True)
         self.inspector_key_id.setText(f"Key ID: {key.key_id}")
         width_u = key.w / 2 if self.layout.label == "matrix" else key.w
+        visual_x = key.x + key.dx / 2 if self.layout.label == "matrix" else key.x
+        visual_y = key.y + key.dy / 2 if self.layout.label == "matrix" else key.y
         self.inspector_position.setText(
-            f"Position: x={key.x}, y={key.y} ({width_u:g}u × {key.h}u)"
+            f"Position: x={visual_x:g}, y={visual_y:g} ({width_u:g}u × {key.h}u)"
         )
         self._load_matrix_key_editor(key)
         self._load_action_into_editor(self._action_from_assignment(key.assignment))

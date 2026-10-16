@@ -2,7 +2,12 @@
 
 import pytest
 
-from desktop_app.matrix_model import MatrixConfig, MatrixDataError, matrix_layout
+from desktop_app.matrix_model import (
+    WIDTH_PRESETS_HALF_UNITS,
+    MatrixConfig,
+    MatrixDataError,
+    matrix_layout,
+)
 
 
 def test_valid_config_has_stable_row_major_keys_and_geometry() -> None:
@@ -47,6 +52,44 @@ def test_per_key_width_and_label_edits() -> None:
     assert config.label_for((0, 1)) == "Space"
     assert config.to_layout().keys[1].w == 5
     assert config.validate() == (True, [])
+
+
+def test_width_presets_include_full_required_set() -> None:
+    widths_u = {half_units / 2 for half_units in WIDTH_PRESETS_HALF_UNITS}
+
+    assert {1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 6.25} <= widths_u
+
+
+def test_spacebar_render_plan_occludes_all_six_underlying_cells() -> None:
+    config = MatrixConfig(
+        rows=1,
+        cols=6,
+        switches={(0, column) for column in range(6)},
+        key_widths={(0, 0): 12.5},
+        key_labels={(0, 0): "Space"},
+    )
+
+    layout = config.to_layout()
+
+    assert [key.key_id for key in layout.render_keys()] == ["MX-00-00"]
+    assert layout.render_keys()[0].label == "Space"
+    assert layout.key_count == 6
+
+
+def test_visual_offset_does_not_change_key_id_or_electrical_mapping() -> None:
+    cell = (1, 2)
+    config = MatrixConfig(
+        rows=2,
+        cols=3,
+        switches={cell},
+        key_visual_offsets={cell: (-1, 3)},
+    )
+
+    key = config.to_layout().keys[0]
+
+    assert (key.key_id, key.x, key.y) == ("MX-01-02", 2, 1)
+    assert (key.dx, key.dy) == (-1, 3)
+    assert config.cell_to_key_id() == {cell: "MX-01-02"}
 
 
 @pytest.mark.parametrize(
@@ -95,6 +138,7 @@ def test_serialization_round_trip() -> None:
         switches={(0, 0), (1, 2)},
         key_widths={(1, 2): 5},
         key_labels={(0, 0): "Esc", (1, 2): "Space"},
+        key_visual_offsets={(0, 0): (1, -2)},
         row_pins=[10, 11],
         column_pins=[20, 21, 22],
     )
@@ -110,10 +154,12 @@ def test_from_dict_defaults_missing_optional_fields() -> None:
 
     assert config.key_widths == {}
     assert config.key_labels == {}
+    assert config.key_visual_offsets == {}
     assert config.row_pins == [None, None]
     assert config.column_pins == [None, None, None]
     assert config.width_for((1, 2)) == 2
     assert config.label_for((1, 2)) == ""
+    assert config.visual_offset_for((1, 2)) == (0, 0)
 
 
 def test_from_dict_reports_bad_data_clearly() -> None:

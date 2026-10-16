@@ -1,7 +1,7 @@
 """Electrical matrix configuration and layout conversion.
 
 Matrix cells are zero-indexed ``(row, column)`` tuples.  Key widths are stored
-as integer half-units so that the model never needs floating-point geometry.
+in half-unit values; .5 values represent the required quarter-unit widths.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ DEFAULT_MAX_PIN = 39
 DEFAULT_WIDTH_HALF_UNITS = 2
 MIN_WIDTH_HALF_UNITS = 1
 MAX_WIDTH_HALF_UNITS = 25
+WIDTH_PRESETS_HALF_UNITS = (2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 12.5)
 
 Cell = tuple[int, int]
 
@@ -53,8 +54,9 @@ class MatrixConfig:
     rows: int
     cols: int
     switches: set[Cell] = field(default_factory=set)
-    key_widths: dict[Cell, int] = field(default_factory=dict)
+    key_widths: dict[Cell, int | float] = field(default_factory=dict)
     key_labels: dict[Cell, str] = field(default_factory=dict)
+    key_visual_offsets: dict[Cell, tuple[int, int]] = field(default_factory=dict)
     row_pins: list[int | None] = field(default_factory=list)
     column_pins: list[int | None] = field(default_factory=list)
     min_pin: int = DEFAULT_MIN_PIN
@@ -78,13 +80,17 @@ class MatrixConfig:
         """Return the key ID for a populated cell, or ``None`` if it is empty."""
         return _cell_key_id(cell) if cell in self.switches and _is_cell(cell) else None
 
-    def width_for(self, cell: Cell) -> int:
+    def width_for(self, cell: Cell) -> int | float:
         """Return a cell's half-unit width, including the 1u default."""
         return self.key_widths.get(cell, DEFAULT_WIDTH_HALF_UNITS)
 
     def label_for(self, cell: Cell) -> str:
         """Return a cell's display label, including the empty default."""
         return self.key_labels.get(cell, "")
+
+    def visual_offset_for(self, cell: Cell) -> tuple[int, int]:
+        """Return ``(dx, dy)`` in half-unit increments for a populated cell."""
+        return self.key_visual_offsets.get(cell, (0, 0))
 
     def _ordered_cells(self) -> list[Cell]:
         if not isinstance(self.switches, (set, frozenset)):
@@ -122,6 +128,7 @@ class MatrixConfig:
 
         cell_set = set(cells)
         self._validate_key_values(self.key_widths, self.key_labels, cell_set, errors)
+        self._validate_visual_offsets(cell_set, errors)
         self._validate_pin_range(errors)
         self._validate_pin_list("row", self.row_pins, self.rows, errors)
         self._validate_pin_list("column", self.column_pins, self.cols, errors)
@@ -141,12 +148,14 @@ class MatrixConfig:
             for cell, width in widths.items():
                 if not _is_cell(cell) or cell not in cells:
                     errors.append(f"Width is assigned to non-populated cell {cell!r}")
-                if type(width) is not int or not (
+                numeric_width = type(width) in (int, float)
+                quarter_aligned = numeric_width and float(width * 2).is_integer()
+                if not numeric_width or not quarter_aligned or not (
                     MIN_WIDTH_HALF_UNITS <= width <= MAX_WIDTH_HALF_UNITS
                 ):
                     errors.append(
-                        f"Width for cell {cell!r} must be an integer from 1 to 25 "
-                        "half-units"
+                        f"Width for cell {cell!r} must be 1..25 half-units in "
+                        "quarter-unit increments"
                     )
         if not isinstance(labels, dict):
             errors.append("Matrix key labels must be a cell-to-label mapping")
@@ -156,6 +165,25 @@ class MatrixConfig:
                     errors.append(f"Label is assigned to non-populated cell {cell!r}")
                 if not isinstance(label, str):
                     errors.append(f"Label for cell {cell!r} must be a string")
+
+    def _validate_visual_offsets(
+        self, cells: set[Cell], errors: list[str]
+    ) -> None:
+        if not isinstance(self.key_visual_offsets, dict):
+            errors.append("Matrix visual offsets must be a cell-to-offset mapping")
+            return
+        for cell, offset in self.key_visual_offsets.items():
+            if not _is_cell(cell) or cell not in cells:
+                errors.append(f"Visual offset is assigned to non-populated cell {cell!r}")
+            if (
+                not isinstance(offset, tuple)
+                or len(offset) != 2
+                or type(offset[0]) is not int
+                or type(offset[1]) is not int
+            ):
+                errors.append(
+                    f"Visual offset for cell {cell!r} must be two integer half-units"
+                )
 
     def _validate_pin_range(self, errors: list[str]) -> None:
         if (
@@ -222,6 +250,11 @@ class MatrixConfig:
                 for cell in self._ordered_cells()
                 if cell in self.key_labels
             },
+            "key_visual_offsets": {
+                _cell_key_id(cell): list(self.key_visual_offsets[cell])
+                for cell in self._ordered_cells()
+                if cell in self.key_visual_offsets
+            },
             "row_pins": list(self.row_pins) if isinstance(self.row_pins, list) else [],
             "column_pins": (
                 list(self.column_pins) if isinstance(self.column_pins, list) else []
@@ -261,12 +294,23 @@ class MatrixConfig:
 
         widths = cls._decode_key_mapping(data.get("key_widths", {}), "key_widths")
         labels = cls._decode_key_mapping(data.get("key_labels", {}), "key_labels")
+        raw_offsets = cls._decode_key_mapping(
+            data.get("key_visual_offsets", {}), "key_visual_offsets"
+        )
+        offsets: dict[Cell, tuple[int, int]] = {}
+        for cell, value in raw_offsets.items():
+            if not isinstance(value, (list, tuple)) or len(value) != 2:
+                raise MatrixDataError(
+                    f"Visual offset for {_cell_key_id(cell)} must be [dx, dy]"
+                )
+            offsets[cell] = (value[0], value[1])
         config = cls(
             rows=rows,
             cols=cols,
             switches=switches,
             key_widths=widths,
             key_labels=labels,
+            key_visual_offsets=offsets,
             row_pins=data.get("row_pins", _default_pins(rows)),
             column_pins=data.get("column_pins", _default_pins(cols)),
             min_pin=data.get("min_pin", DEFAULT_MIN_PIN),
@@ -309,8 +353,8 @@ class MatrixConfig:
 def matrix_layout(config: MatrixConfig, name: str = "Matrix") -> Layout:
     """Convert populated matrix cells to row-major ``Key`` geometry.
 
-    Positions remain matrix grid coordinates.  ``Key.w`` contains integer
-    half-units for matrix layouts; consumers can render it using a 0.5u scale.
+    Positions remain matrix grid coordinates.  ``Key.w`` contains half-units
+    for matrix layouts; .5 values represent quarter-unit widths.
     """
     return Layout(
         name=name,
@@ -324,6 +368,8 @@ def matrix_layout(config: MatrixConfig, name: str = "Matrix") -> Layout:
                 y=cell[0],
                 w=config.width_for(cell),
                 label=config.label_for(cell),
+                dx=config.visual_offset_for(cell)[0],
+                dy=config.visual_offset_for(cell)[1],
             )
             for cell in config._ordered_cells()
         ],

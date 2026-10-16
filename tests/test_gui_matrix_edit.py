@@ -58,6 +58,21 @@ def test_matrix_key_width_and_label_update_layout_and_visual(matrix_window) -> N
     assert matrix_window.key_widgets[key_id].width() == original_width
 
 
+def test_visual_position_edit_keeps_electrical_identity(matrix_window) -> None:
+    key_id = matrix_window.selected_key.key_id
+    mapping = matrix_window.matrix_config.cell_to_key_id()
+    matrix_window.matrix_dx_input.setValue(3)
+    matrix_window.matrix_dy_input.setValue(1)
+
+    assert matrix_window.apply_selected_matrix_visual_offset()
+
+    assert matrix_window.selected_key.key_id == key_id
+    assert matrix_window.matrix_config.cell_to_key_id() == mapping
+    assert matrix_window.matrix_config.key_visual_offsets[(0, 0)] == (3, 1)
+    assert (matrix_window.selected_key.x, matrix_window.selected_key.y) == (0, 0)
+    assert (matrix_window.selected_key.dx, matrix_window.selected_key.dy) == (3, 1)
+
+
 def test_move_matrix_key_migrates_metadata_assignment_and_rejects_occupied(
     matrix_window, monkeypatch
 ) -> None:

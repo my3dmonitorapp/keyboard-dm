@@ -17,14 +17,18 @@ class Key:
     key_id: str
     x: int
     y: int
-    w: int = 1
+    w: int | float = 1
     h: int = 1
     assignment: str = "NONE"
     label: str = ""
+    # Matrix-only visual offsets, stored in integer half-unit increments.  The
+    # electrical x/y coordinates remain untouched.
+    dx: int = 0
+    dy: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible representation of this key."""
-        return {
+        data = {
             "key_id": self.key_id,
             "x": self.x,
             "y": self.y,
@@ -33,6 +37,10 @@ class Key:
             "assignment": self.assignment,
             "label": self.label,
         }
+        if self.dx or self.dy:
+            data["dx"] = self.dx
+            data["dy"] = self.dy
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Key:
@@ -45,6 +53,8 @@ class Key:
             h=data["h"],
             assignment=data["assignment"],
             label=data.get("label", ""),
+            dx=data.get("dx", 0),
+            dy=data.get("dy", 0),
         )
 
 
@@ -62,6 +72,49 @@ class Layout:
     def key_count(self) -> int:
         """Return the number of keys in this layout."""
         return len(self.keys)
+
+    def render_keys(self) -> list[Key]:
+        """Return visible keys after resolving matrix-key occlusion.
+
+        Wider and explicitly positioned caps take precedence.  A lower-priority
+        cap that intersects one of them is omitted from the render plan, while
+        remaining keys and their stable electrical IDs stay in ``keys``.
+        """
+        if self.label != "matrix":
+            return list(self.keys)
+
+        indexed = list(enumerate(self.keys))
+        priority = sorted(
+            indexed,
+            key=lambda item: (
+                bool(item[1].dx or item[1].dy),
+                item[1].w,
+                item[1].w * item[1].h,
+                item[0],
+            ),
+            reverse=True,
+        )
+        visible: list[tuple[int, Key]] = []
+        occupied: list[tuple[int, int, int, int]] = []
+        for index, key in priority:
+            rectangle = (
+                key.x * 4 + key.dx * 2,
+                key.y * 2 + key.dy,
+                round(key.w * 2),
+                key.h * 2,
+            )
+            left, top, width, height = rectangle
+            intersects = any(
+                left < other_left + other_width
+                and other_left < left + width
+                and top < other_top + other_height
+                and other_top < top + height
+                for other_left, other_top, other_width, other_height in occupied
+            )
+            if not intersects:
+                visible.append((index, key))
+                occupied.append(rectangle)
+        return [key for _index, key in sorted(visible)]
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible representation of this layout."""

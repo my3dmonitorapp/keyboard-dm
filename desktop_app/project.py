@@ -68,23 +68,27 @@ def list_project_files(
 
 
 def _layout_block(layout: Layout) -> dict[str, Any]:
+    def geometry(key: Key) -> dict[str, Any]:
+        item = {
+            "key_id": key.key_id,
+            "x": key.x,
+            "y": key.y,
+            "w": key.w,
+            "h": key.h,
+            "label": key.label,
+        }
+        if key.dx or key.dy:
+            item["dx"] = key.dx
+            item["dy"] = key.dy
+        return item
+
     return {
         "name": layout.name,
         "key_count": layout.key_count,
         "cols": layout.cols,
         "rows": layout.rows,
         "label": layout.label,
-        "keys": [
-            {
-                "key_id": key.key_id,
-                "x": key.x,
-                "y": key.y,
-                "w": key.w,
-                "h": key.h,
-                "label": key.label,
-            }
-            for key in layout.keys
-        ],
+        "keys": [geometry(key) for key in layout.keys],
     }
 
 
@@ -141,14 +145,17 @@ def _validate_layout_block(data: Any, profile: Mapping[str, Any]) -> Layout:
         key_id = item.get("key_id")
         x, y = item.get("x"), item.get("y")
         w, h = item.get("w", 1), item.get("h", 1)
+        dx, dy = item.get("dx", 0), item.get("dy", 0)
         if key_id not in profile["keys"] or key_id in seen_ids:
             raise ProjectError(
                 f"Project layout geometry has an unknown or duplicate key ID {key_id!r}"
             )
         if type(x) is not int or x < 0 or type(y) is not int or y < 0:
             raise ProjectError(f"Project layout position for {key_id} must be non-negative")
-        if type(w) is not int or w < 1 or type(h) is not int or h < 1:
+        if type(w) not in (int, float) or w < 1 or type(h) is not int or h < 1:
             raise ProjectError(f"Project layout size for {key_id} must be positive")
+        if type(dx) is not int or type(dy) is not int:
+            raise ProjectError(f"Project layout visual offset for {key_id} must be integer")
         if x + w > cols or y + h > rows:
             raise ProjectError(f"Project layout geometry for {key_id} is outside its grid")
         seen_ids.add(key_id)
@@ -161,6 +168,8 @@ def _validate_layout_block(data: Any, profile: Mapping[str, Any]) -> Layout:
                 h=h,
                 assignment=profile["keys"][key_id]["assignment"],
                 label=item.get("label", ""),
+                dx=dx,
+                dy=dy,
             )
         )
 

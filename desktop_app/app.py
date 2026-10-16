@@ -45,6 +45,7 @@ from .action import (
     parse_shortcut,
 )
 from .device import SimulatedESP32S3Device
+from .esp32_gpio import PinRole, suggest_safe_pins, validate_gpio_pin
 from .layout_model import Key, Layout
 from .layouts import BUILT_IN_LAYOUTS, L75, make_custom_layout
 from .matrix_model import (
@@ -452,12 +453,14 @@ class MatrixPinmapDialog(QDialog):
         self._changed = changed
         self.row_pin_inputs: list[QLineEdit] = []
         self.column_pin_inputs: list[QLineEdit] = []
+        self.row_pin_messages: list[QLabel] = []
+        self.column_pin_messages: list[QLabel] = []
         self.validation_errors: list[str] = []
 
         root = QVBoxLayout(self)
         help_label = QLabel(
-            "Assign one GPIO pin to each matrix line. Leave a field blank or use "
-            "- for an unassigned line.",
+            "ESP32-WROOM-32 scan roles: rows are outputs (driven low); columns "
+            "are inputs with pull-ups. Every matrix line must be assigned.",
             self,
         )
         help_label.setWordWrap(True)
@@ -482,20 +485,31 @@ class MatrixPinmapDialog(QDialog):
         grid_widget = QWidget(self)
         grid_widget.setObjectName("matrixPinmapGrid")
         grid = QGridLayout(grid_widget)
-        grid.addWidget(QLabel("Matrix line", grid_widget), 0, 0)
+        grid.addWidget(QLabel("Matrix line / role", grid_widget), 0, 0)
         grid.addWidget(QLabel("GPIO pin", grid_widget), 0, 1)
+        grid.addWidget(QLabel("Validation", grid_widget), 0, 2)
         grid_row = 1
         for index, pin in enumerate(config.row_pins):
             editor = self._make_pin_editor("row", index, pin, grid_widget)
+            message = self._make_pin_message("row", index, grid_widget)
             self.row_pin_inputs.append(editor)
-            grid.addWidget(QLabel(f"Row {index}", grid_widget), grid_row, 0)
+            self.row_pin_messages.append(message)
+            grid.addWidget(QLabel(f"Row {index} (output)", grid_widget), grid_row, 0)
             grid.addWidget(editor, grid_row, 1)
+            grid.addWidget(message, grid_row, 2)
             grid_row += 1
         for index, pin in enumerate(config.column_pins):
             editor = self._make_pin_editor("column", index, pin, grid_widget)
+            message = self._make_pin_message("column", index, grid_widget)
             self.column_pin_inputs.append(editor)
-            grid.addWidget(QLabel(f"Column {index}", grid_widget), grid_row, 0)
+            self.column_pin_messages.append(message)
+            grid.addWidget(
+                QLabel(f"Column {index} (input + pull-up)", grid_widget),
+                grid_row,
+                0,
+            )
             grid.addWidget(editor, grid_row, 1)
+            grid.addWidget(message, grid_row, 2)
             grid_row += 1
 
         scroll = QScrollArea(self)
@@ -513,6 +527,14 @@ class MatrixPinmapDialog(QDialog):
         action_layout.addWidget(self.clear_button)
         action_layout.addStretch()
         root.addLayout(action_layout)
+
+        self.warning_label = QLabel(self)
+        self.warning_label.setObjectName("matrixPinmapWarningPanel")
+        self.warning_label.setWordWrap(True)
+        self.warning_label.setStyleSheet(
+            "color: #f0c36b; background-color: #332b18; padding: 6px;"
+        )
+        root.addWidget(self.warning_label)
 
         self.status_label = QLabel(self)
         self.status_label.setObjectName("matrixPinmapStatusLabel")
@@ -546,6 +568,17 @@ class MatrixPinmapDialog(QDialog):
         return editor
 
     @staticmethod
+    def _make_pin_message(
+        kind: str, index: int, parent: QWidget
+    ) -> QLabel:
+        message = QLabel(parent)
+        title_kind = "Row" if kind == "row" else "Column"
+        message.setObjectName(f"matrix{title_kind}PinMessage_{index}")
+        message.setWordWrap(True)
+        message.setStyleSheet("color: #ef7777;")
+        return message
+
+    @staticmethod
     def _pin_value(text: str) -> int | None | str:
         stripped = text.strip()
         if not stripped or stripped == "-":
@@ -571,8 +604,41 @@ class MatrixPinmapDialog(QDialog):
             self._changed()
 
     def refresh_validation(self) -> bool:
-        """Render model validation without changing the entered state."""
-        ok, errors = self.config.validate()
+        """Render model and ESP32 electrical validation without mutation."""
+        _model_ok, errors = self.config.validate()
+        warnings: list[str] = []
+        for kind, pins, messages, role in (
+            ("Row", self.config.row_pins, self.row_pin_messages, PinRole.OUTPUT),
+            (
+                "Column",
+                self.config.column_pins,
+                self.column_pin_messages,
+                PinRole.INPUT,
+            ),
+        ):
+            for index, (pin, message) in enumerate(zip(pins, messages)):
+                result = validate_gpio_pin(pin, role)
+                pin_error = result.error
+                if (
+                    pin_error is None
+                    and type(pin) is int
+                    and not self.config.min_pin <= pin <= self.config.max_pin
+                ):
+                    pin_error = (
+                        f"GPIO {pin} is outside configured range "
+                        f"{self.config.min_pin}..{self.config.max_pin}"
+                    )
+                message.setText(pin_error or "")
+                if pin_error:
+                    errors.append(f"{kind} {index}: {pin_error}")
+                if result.warning:
+                    warnings.append(f"{kind} {index}: {result.warning}")
+
+        self.warning_label.setVisible(bool(warnings))
+        self.warning_label.setText(
+            "Boot/strapping warnings:\n" + "\n".join(warnings) if warnings else ""
+        )
+        ok = not errors
         self.validation_errors = errors
         self.status_label.setProperty("valid", ok)
         if ok:
@@ -601,12 +667,16 @@ class MatrixPinmapDialog(QDialog):
         self._notify_changed()
 
     def suggest_pins(self) -> None:
-        """Assign distinct in-range pins in row-first, column-second order."""
-        available = iter(range(self.config.min_pin, self.config.max_pin + 1))
-        assignments = [
-            next(available, None)
-            for _ in range(self.config.rows + self.config.cols)
-        ]
+        """Assign distinct conservative pins in row-first, column-second order."""
+        roles = [PinRole.OUTPUT] * self.config.rows + [PinRole.INPUT] * self.config.cols
+        assignments = suggest_safe_pins(
+            roles,
+            min_pin=self.config.min_pin,
+            max_pin=self.config.max_pin,
+        )
+        assignments.extend(
+            [None] * (self.config.rows + self.config.cols - len(assignments))
+        )
         self.config.row_pins[:] = assignments[: self.config.rows]
         self.config.column_pins[:] = assignments[self.config.rows :]
         self._show_model_pins()

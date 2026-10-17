@@ -1,0 +1,11 @@
+menu "Unverified ESP32 board"
+config KBDM_BOARD_PINMAP_VERIFIED
+    bool "Board pin map has passed the F1 hardware gate"
+    default n
+config KBDM_BOARD_ROW_COUNT
+    int
+    default 0
+config KBDM_BOARD_COL_COUNT
+    int
+    default 0
+endmenu

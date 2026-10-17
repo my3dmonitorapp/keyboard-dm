@@ -29,10 +29,19 @@ The C3 USB distinction and GPIO18/19 routing are documented in Espressif's
 
 ## Source sharing and divergence
 
-There is one untouched C11 core under `firmware/shared`, referenced by the
-`kbdm_core` IDF component and the host Makefile. There are two binaries:
-`kbdm_esp32.bin` and `kbdm_esp32c3.bin`. A binary must never be relabeled or
-used on the other family.
+**Can one binary run on both ESP32 and ESP32-C3? No.** The classic ESP32 uses
+Xtensa machine code while the C3 uses RISC-V machine code. They also select
+different ESP-IDF targets, startup/linker material, GPIO capability tables,
+reserved pins, and console transports. Each family therefore requires its own
+cross compiler and its own build: `firmware/build.sh esp32` produces
+`kbdm_esp32.bin`, while `firmware/build.sh esp32c3` produces
+`kbdm_esp32c3.bin`. A binary must never be relabeled or used on the other
+family.
+
+This does not create two firmware forks. There is one untouched C11 core under
+`firmware/shared`, referenced by the `kbdm_core` IDF component and the host
+Makefile. Both family builds compile that same shared core and add their own
+small target/capability layer.
 
 The HAL divergence is limited to the cross compiler/IDF target, silicon GPIO
 capability table, reserved flash/strap/USB pins, UART versus USB Serial/JTAG
@@ -40,6 +49,21 @@ console selection, and family sdkconfig. GPIO sampling, the single-active-line
 LEDC policy, NVS A/B operations, BLE GATT reports, and the core state machines
 share source. BSP pin maps contain zero rows/columns by default. F1 must identify
 the 9-key chip and wiring before selecting either build or adding real pins.
+
+## What an Arduino build would change
+
+An Arduino-based build would still require a separate board package and binary
+for each MCU family; Arduino cannot make Xtensa and RISC-V binary-compatible.
+It would replace the explicit ESP-IDF project/sdkconfig/component integration
+with an Arduino core, board definition, and pinned libraries, and it would need
+equivalent implementations of BLE HID, serial transport, GPIO/LEDC handling,
+and atomic NVS A/B behavior around the same shared state-machine semantics.
+Unless those core, board-package, library, and partition versions were frozen,
+the build would also be less reproducible. Arduino is retained only as a
+possible preservation/recovery route if the original 9-key sketch and its exact
+environment resurface; it is not the F2 build baseline. See
+[`framework-decision.md`](framework-decision.md) for the full trade-off and
+decision.
 
 ## Compatibility blockers before physical use
 

@@ -1,0 +1,34 @@
+menu "Keyboard DM firmware"
+
+choice KBDM_FAMILY
+    prompt "Firmware family"
+    default KBDM_FAMILY_ESP32 if IDF_TARGET_ESP32
+    default KBDM_FAMILY_ESP32C3 if IDF_TARGET_ESP32C3
+
+config KBDM_FAMILY_ESP32
+    bool "ESP32"
+    depends on IDF_TARGET_ESP32
+
+config KBDM_FAMILY_ESP32C3
+    bool "ESP32-C3"
+    depends on IDF_TARGET_ESP32C3
+endchoice
+
+config KBDM_BLE_ENABLED
+    bool "Enable BLE HID"
+    default y
+
+config KBDM_NVS_CONFIG_VERSION
+    int "NVS config record version"
+    range 1 65535
+    default 1
+
+config KBDM_SERIAL_BAUD
+    int "Serial protocol baud"
+    range 9600 2000000
+    default 115200
+    help
+        Applied to UART0 on classic ESP32. USB Serial/JTAG on ESP32-C3 is a
+        USB transport and does not have a physical UART baud rate.
+
+endmenu

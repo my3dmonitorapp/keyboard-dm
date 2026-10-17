@@ -36,6 +36,7 @@ typedef struct {
     size_t console_length;
     uint8_t ble_report[FAKE_HAL_TRANSPORT_CAPACITY];
     size_t ble_report_length;
+    size_t ble_send_call_count;
     kb_hal_error_t next_console_error;
     kb_hal_error_t next_ble_error;
     uint8_t pin_write_calls[FAKE_HAL_MAX_PIN_CALLS];

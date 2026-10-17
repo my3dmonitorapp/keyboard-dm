@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kb_actions.h"
+
 #define KB_CONFIG_PROTOCOL_VERSION 1U
 #define KB_CONFIG_SCHEMA_VERSION 1U
 #define KB_CONFIG_MAX_ROWS 16U
@@ -14,8 +16,8 @@
 #define KB_CONFIG_MAX_RESERVED_PINS 32U
 #define KB_CONFIG_MAX_INPUT_ONLY_PINS 32U
 #define KB_CONFIG_MAX_EXTERNAL_PULLUP_PINS 32U
-#define KB_CONFIG_MAX_SHORTCUT_MODIFIERS 4U
-#define KB_CONFIG_KEY_NAME_MAX 24U
+#define KB_CONFIG_MAX_SHORTCUT_MODIFIERS KB_ACTION_MAX_SHORTCUT_MODIFIERS
+#define KB_CONFIG_KEY_NAME_MAX KB_ACTION_KEY_NAME_MAX
 #define KB_CONFIG_CHIP_CLASS_MAX 16U
 #define KB_CONFIG_PROJECT_NAME_MAX 64U
 #define KB_CONFIG_UPDATED_MAX 40U
@@ -42,29 +44,6 @@ typedef enum {
     KB_DIODE_SCOPE_BOARD = 0,
     KB_DIODE_SCOPE_PER_SWITCH
 } kb_diode_scope_t;
-
-typedef enum {
-    KB_ACTION_NONE = 0,
-    KB_ACTION_KEY,
-    KB_ACTION_SHORTCUT,
-    KB_ACTION_MEDIA,
-    KB_ACTION_MODIFIER
-} kb_action_type_t;
-
-typedef enum {
-    KB_MODIFIER_DOWN = 0,
-    KB_MODIFIER_UP
-} kb_modifier_event_t;
-
-typedef struct {
-    kb_action_type_t type;
-    char key_name[KB_CONFIG_KEY_NAME_MAX];
-    uint16_t usage_id;
-    uint8_t modifier_count;
-    uint8_t modifier_bits[KB_CONFIG_MAX_SHORTCUT_MODIFIERS];
-    uint8_t modifier_bit;
-    kb_modifier_event_t modifier_event;
-} kb_action_t;
 
 typedef struct {
     uint8_t row;

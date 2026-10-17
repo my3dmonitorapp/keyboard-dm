@@ -187,6 +187,9 @@ static kb_hal_error_t send_buffer(fake_hal_t *fake, const void *buffer,
     }
     memcpy(destination, buffer, length);
     *destination_length = length;
+    if (ble) {
+        ++fake->ble_send_call_count;
+    }
     return KB_HAL_OK;
 }
 

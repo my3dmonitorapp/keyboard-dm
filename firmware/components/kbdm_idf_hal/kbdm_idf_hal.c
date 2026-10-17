@@ -2,6 +2,9 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "driver/gpio.h"
 #include "driver/ledc.h"
@@ -291,6 +294,34 @@ static kb_hal_error_t ble_send(void *opaque, const void *buffer, size_t length)
     }
     return from_esp(esp_ble_gatts_send_indicate(hal->gatts_if, hal->conn_id,
         hal->handles[HID_CONSUMER_VALUE], sizeof(consumer), consumer, false));
+}
+
+kb_hal_error_t kbdm_idf_console_read(kbdm_idf_hal_t *context, void *buffer,
+                                     size_t capacity, size_t *length)
+{
+    ssize_t received;
+    int flags;
+    if (context == NULL || buffer == NULL || length == NULL || capacity == 0U)
+        return KB_HAL_ERR_INVALID_ARGUMENT;
+    (void)context;
+    *length = 0U;
+    flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    if (flags >= 0 && (flags & O_NONBLOCK) == 0)
+        (void)fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+    received = read(STDIN_FILENO, buffer, capacity);
+    if (received > 0) {
+        *length = (size_t)received;
+        return KB_HAL_OK;
+    }
+    if (received == 0 || errno == EAGAIN || errno == EWOULDBLOCK)
+        return KB_HAL_OK;
+    return KB_HAL_ERR_IO;
+}
+
+kb_hal_error_t kbdm_idf_hid_report(kbdm_idf_hal_t *context,
+                                   const void *report, size_t length)
+{
+    return ble_send(context, report, length);
 }
 
 static void gap_callback(esp_gap_ble_cb_event_t event,

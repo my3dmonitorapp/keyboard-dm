@@ -9,6 +9,10 @@ typedef struct kbdm_idf_hal kbdm_idf_hal_t;
 kb_hal_error_t kbdm_idf_hal_init(kbdm_idf_hal_t **context,
                                  kb_hal_ops_t *operations);
 kb_hal_error_t kbdm_idf_ble_start(kbdm_idf_hal_t *context);
+kb_hal_error_t kbdm_idf_console_read(kbdm_idf_hal_t *context, void *buffer,
+                                     size_t capacity, size_t *length);
+kb_hal_error_t kbdm_idf_hid_report(kbdm_idf_hal_t *context,
+                                   const void *report, size_t length);
 
 /* Implemented by the selected family component. */
 const kb_hal_probe_t *kbdm_family_capabilities(void);

@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define KB_BOOT_METADATA_MAGIC UINT32_C(0x4b424d31)
@@ -71,18 +72,27 @@ static void metadata_build(boot_metadata_t *metadata,
 static slot_result_t load_slot(kb_boot_t *boot, kb_hal_store_slot_t slot,
                                kb_config_t *config, uint16_t *error_count)
 {
-    char buffer[KB_BOOT_CONFIG_BYTES];
+    char *buffer;
     size_t length = 0U;
     kb_config_error_list_t errors;
     kb_hal_error_t result;
+    slot_result_t slot_result;
+    buffer = malloc(KB_BOOT_CONFIG_BYTES);
+    if (buffer == NULL) {
+        return SLOT_IO_ERROR;
+    }
     kb_config_errors_reset(&errors);
     result = boot->hal.hal_store_read(
-        boot->hal.ctx, slot, buffer, sizeof(buffer), &length);
+        boot->hal.ctx, slot, buffer, KB_BOOT_CONFIG_BYTES, &length);
     if (result == KB_HAL_ERR_NOT_FOUND) {
+        free(buffer);
         return SLOT_ABSENT;
     }
     if (result != KB_HAL_OK) {
-        return result == KB_HAL_ERR_CORRUPT ? SLOT_INVALID : SLOT_IO_ERROR;
+        slot_result = result == KB_HAL_ERR_CORRUPT ? SLOT_INVALID
+                                                   : SLOT_IO_ERROR;
+        free(buffer);
+        return slot_result;
     }
     if (length == 0U ||
         kb_config_from_json(buffer, length, config) != KB_CONFIG_PARSE_OK ||
@@ -93,8 +103,10 @@ static slot_result_t load_slot(kb_boot_t *boot, kb_hal_store_slot_t slot,
                 *error_count = 1U;
             }
         }
+        free(buffer);
         return SLOT_INVALID;
     }
+    free(buffer);
     return SLOT_VALID;
 }
 
@@ -129,8 +141,8 @@ kb_boot_result_t kb_boot_start(kb_boot_t *boot,
     size_t metadata_length = 0U;
     kb_hal_error_t metadata_result;
     bool have_metadata;
-    kb_config_t first;
-    kb_config_t second;
+    kb_config_t *first;
+    kb_config_t *second;
     slot_result_t first_result;
     slot_result_t second_result;
     kb_hal_store_slot_t first_slot = KB_HAL_STORE_CONFIG_A;
@@ -143,6 +155,17 @@ kb_boot_result_t kb_boot_start(kb_boot_t *boot,
     boot->descriptor = *descriptor;
     boot->hal = *hal;
     boot->status.state = KB_BOOT_LOADING;
+    first = malloc(sizeof(*first));
+    second = malloc(sizeof(*second));
+    if (first == NULL || second == NULL) {
+        free(first);
+        free(second);
+        boot->status.state = KB_BOOT_SAFE_MODE;
+        boot->status.matrix_outputs_enabled = false;
+        boot->reason = KB_BOOT_REASON_STORAGE_ERROR;
+        banner(boot, "safe_mode", "no_memory");
+        return KB_BOOT_STORAGE_ERROR;
+    }
     metadata_result = boot->hal.hal_store_read(
         boot->hal.ctx, KB_HAL_STORE_METADATA, &metadata, sizeof(metadata),
         &metadata_length);
@@ -154,9 +177,9 @@ kb_boot_result_t kb_boot_start(kb_boot_t *boot,
                           ? KB_HAL_STORE_CONFIG_B
                           : KB_HAL_STORE_CONFIG_A;
     }
-    first_result = load_slot(boot, first_slot, &first,
+    first_result = load_slot(boot, first_slot, first,
                              &boot->status.validation_error_count);
-    second_result = load_slot(boot, second_slot, &second,
+    second_result = load_slot(boot, second_slot, second,
                               &boot->status.validation_error_count);
 
     /* A present but unreadable marker can be an interrupted publication. */
@@ -165,20 +188,22 @@ kb_boot_result_t kb_boot_start(kb_boot_t *boot,
         boot->status.matrix_outputs_enabled = false;
         boot->reason = KB_BOOT_REASON_STORAGE_ERROR;
         banner(boot, "safe_mode", "metadata_invalid");
+        free(first);
+        free(second);
         return KB_BOOT_OK;
     }
 
     if (first_result == SLOT_VALID &&
-        (!have_metadata || first.generation == metadata.active_generation) &&
+        (!have_metadata || first->generation == metadata.active_generation) &&
         (have_metadata || second_result != SLOT_VALID ||
-         first.generation >= second.generation)) {
-        select_active(boot, first_slot, &first);
+         first->generation >= second->generation)) {
+        select_active(boot, first_slot, first);
         if (have_metadata && metadata.has_last_good &&
             metadata.last_good_slot != metadata.active_slot) {
             const kb_config_t *candidate = second_slot ==
                                                    (kb_hal_store_slot_t)
                                                        metadata.last_good_slot
-                                               ? &second
+                                               ? second
                                                : NULL;
             if (candidate != NULL && second_result == SLOT_VALID &&
                 candidate->generation == metadata.last_good_generation) {
@@ -188,20 +213,24 @@ kb_boot_result_t kb_boot_start(kb_boot_t *boot,
             }
         }
         banner(boot, "valid", "active_valid");
+        free(first);
+        free(second);
         return KB_BOOT_OK;
     }
     if (second_result == SLOT_VALID) {
         boot_metadata_t repaired;
-        select_active(boot, second_slot, &second);
+        select_active(boot, second_slot, second);
         boot->status.rollback_used = have_metadata;
         boot->reason = have_metadata ? KB_BOOT_REASON_ACTIVE_INVALID_ROLLBACK
                                      : KB_BOOT_REASON_NONE;
-        metadata_build(&repaired, second_slot, second.generation, false,
-                       second_slot, second.generation);
+        metadata_build(&repaired, second_slot, second->generation, false,
+                       second_slot, second->generation);
         (void)boot->hal.hal_store_write(boot->hal.ctx, KB_HAL_STORE_METADATA,
                                         &repaired, sizeof(repaired));
         banner(boot, "valid", have_metadata ? "active_invalid_rollback"
                                              : "discovered_valid_slot");
+        free(first);
+        free(second);
         return KB_BOOT_OK;
     }
     boot->status.matrix_outputs_enabled = false;
@@ -210,6 +239,8 @@ kb_boot_result_t kb_boot_start(kb_boot_t *boot,
         boot->status.state = KB_BOOT_NO_CONFIG;
         boot->reason = KB_BOOT_REASON_NO_CONFIG;
         banner(boot, "no_config", "no_config");
+        free(first);
+        free(second);
         return KB_BOOT_OK;
     }
     boot->status.state = KB_BOOT_SAFE_MODE;
@@ -219,6 +250,8 @@ kb_boot_result_t kb_boot_start(kb_boot_t *boot,
     banner(boot, "safe_mode",
            boot->reason == KB_BOOT_REASON_STORAGE_ERROR ? "storage_error"
                                                         : "both_slots_invalid");
+    free(first);
+    free(second);
     return KB_BOOT_OK;
 }
 
@@ -226,30 +259,42 @@ static kb_boot_result_t store_config(kb_boot_t *boot,
                                      kb_hal_store_slot_t slot,
                                      const kb_config_t *config)
 {
-    char buffer[KB_BOOT_CONFIG_BYTES];
+    char *buffer;
     size_t length;
-    kb_config_t verified;
+    kb_config_t *verified;
     uint16_t ignored_errors = 0U;
-    if (kb_config_to_json(config, buffer, sizeof(buffer), &length) !=
-        KB_CONFIG_PARSE_OK) {
+    kb_boot_result_t result = KB_BOOT_STORAGE_ERROR;
+    buffer = malloc(KB_BOOT_CONFIG_BYTES);
+    verified = malloc(sizeof(*verified));
+    if (buffer == NULL || verified == NULL) {
+        free(buffer);
+        free(verified);
         return KB_BOOT_STORAGE_ERROR;
+    }
+    if (kb_config_to_json(config, buffer, KB_BOOT_CONFIG_BYTES, &length) !=
+        KB_CONFIG_PARSE_OK) {
+        goto done;
     }
     if (boot->hal.hal_store_write(boot->hal.ctx, slot, buffer, length) !=
         KB_HAL_OK) {
-        return KB_BOOT_STORAGE_ERROR;
+        goto done;
     }
-    if (load_slot(boot, slot, &verified, &ignored_errors) != SLOT_VALID ||
-        verified.generation != config->generation ||
-        verified.crc32 != config->crc32) {
-        return KB_BOOT_STORAGE_ERROR;
+    if (load_slot(boot, slot, verified, &ignored_errors) != SLOT_VALID ||
+        verified->generation != config->generation ||
+        verified->crc32 != config->crc32) {
+        goto done;
     }
-    return KB_BOOT_OK;
+    result = KB_BOOT_OK;
+done:
+    free(buffer);
+    free(verified);
+    return result;
 }
 
 kb_boot_result_t kb_boot_apply_config(kb_boot_t *boot,
                                       const kb_config_t *config)
 {
-    kb_config_t candidate;
+    kb_config_t *candidate;
     kb_config_error_list_t errors;
     kb_hal_store_slot_t target;
     boot_metadata_t metadata;
@@ -260,17 +305,23 @@ kb_boot_result_t kb_boot_apply_config(kb_boot_t *boot,
     if (boot->has_active && boot->active_config.generation == UINT32_MAX) {
         return KB_BOOT_NO_CHANGE;
     }
-    candidate = *config;
+    candidate = malloc(sizeof(*candidate));
+    if (candidate == NULL) {
+        return KB_BOOT_STORAGE_ERROR;
+    }
+    *candidate = *config;
     generation = boot->has_active ? boot->active_config.generation + 1U : 1U;
-    candidate.generation = generation;
-    if (kb_config_finalize_crc32(&candidate) != KB_CONFIG_PARSE_OK ||
-        !kb_config_validate(&candidate, &boot->descriptor, &errors)) {
+    candidate->generation = generation;
+    if (kb_config_finalize_crc32(candidate) != KB_CONFIG_PARSE_OK ||
+        !kb_config_validate(candidate, &boot->descriptor, &errors)) {
+        free(candidate);
         return KB_BOOT_INVALID_CONFIG;
     }
     target = !boot->has_active || boot->active_slot == KB_HAL_STORE_CONFIG_B
                  ? KB_HAL_STORE_CONFIG_A
                  : KB_HAL_STORE_CONFIG_B;
-    if (store_config(boot, target, &candidate) != KB_BOOT_OK) {
+    if (store_config(boot, target, candidate) != KB_BOOT_OK) {
+        free(candidate);
         return KB_BOOT_STORAGE_ERROR;
     }
     metadata_build(&metadata, target, generation, boot->has_active,
@@ -278,6 +329,7 @@ kb_boot_result_t kb_boot_apply_config(kb_boot_t *boot,
                    boot->has_active ? boot->active_config.generation : generation);
     if (boot->hal.hal_store_write(boot->hal.ctx, KB_HAL_STORE_METADATA,
                                   &metadata, sizeof(metadata)) != KB_HAL_OK) {
+        free(candidate);
         return KB_BOOT_STORAGE_ERROR;
     }
     if (boot->has_active) {
@@ -288,7 +340,8 @@ kb_boot_result_t kb_boot_apply_config(kb_boot_t *boot,
         boot->has_last_good = false;
         boot->status.last_good_generation = 0U;
     }
-    select_active(boot, target, &candidate);
+    select_active(boot, target, candidate);
+    free(candidate);
     boot->status.rollback_used = false;
     boot->reason = KB_BOOT_REASON_NONE;
     return KB_BOOT_OK;
@@ -298,43 +351,52 @@ kb_boot_result_t kb_boot_recover(kb_boot_t *boot)
 {
     boot_metadata_t metadata;
     size_t length = 0U;
-    kb_config_t recovered;
+    kb_config_t *recovered;
     uint16_t error_count = 0U;
     boot_metadata_t consumed;
     if (boot == NULL || !boot->has_active || !hal_complete(&boot->hal)) {
         return KB_BOOT_INVALID_ARGUMENT;
     }
+    recovered = malloc(sizeof(*recovered));
+    if (recovered == NULL) {
+        return KB_BOOT_STORAGE_ERROR;
+    }
     if (boot->hal.hal_store_read(boot->hal.ctx, KB_HAL_STORE_METADATA,
                                  &metadata, sizeof(metadata), &length) !=
             KB_HAL_OK ||
         !metadata_valid(&metadata, length)) {
+        free(recovered);
         return KB_BOOT_STORAGE_ERROR;
     }
     if (!metadata.has_last_good ||
         metadata.last_good_generation == boot->active_config.generation) {
+        free(recovered);
         return KB_BOOT_NO_CHANGE;
     }
     boot->status.state = KB_BOOT_RECOVERING;
     if (load_slot(boot, (kb_hal_store_slot_t)metadata.last_good_slot,
-                  &recovered, &error_count) != SLOT_VALID ||
-        recovered.generation != metadata.last_good_generation) {
+                  recovered, &error_count) != SLOT_VALID ||
+        recovered->generation != metadata.last_good_generation) {
         boot->status.state = KB_BOOT_VALID;
+        free(recovered);
         return KB_BOOT_NO_RECOVERY;
     }
     metadata_build(&consumed,
                    (kb_hal_store_slot_t)metadata.last_good_slot,
-                   recovered.generation, false,
+                   recovered->generation, false,
                    (kb_hal_store_slot_t)metadata.last_good_slot,
-                   recovered.generation);
+                   recovered->generation);
     if (boot->hal.hal_store_write(boot->hal.ctx, KB_HAL_STORE_METADATA,
                                   &consumed, sizeof(consumed)) != KB_HAL_OK) {
         boot->status.state = KB_BOOT_VALID;
+        free(recovered);
         return KB_BOOT_STORAGE_ERROR;
     }
     select_active(boot, (kb_hal_store_slot_t)metadata.last_good_slot,
-                  &recovered);
+                  recovered);
+    free(recovered);
     boot->has_last_good = false;
-    boot->status.last_good_generation = recovered.generation;
+    boot->status.last_good_generation = boot->active_config.generation;
     boot->status.rollback_used = true;
     boot->reason = KB_BOOT_REASON_ACTIVE_INVALID_ROLLBACK;
     return KB_BOOT_OK;

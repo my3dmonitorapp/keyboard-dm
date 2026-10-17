@@ -43,6 +43,8 @@ typedef struct {
     size_t pin_write_call_count;
     uint8_t pin_read_calls[FAKE_HAL_MAX_PIN_CALLS];
     size_t pin_read_call_count;
+    size_t pin_direction_call_count;
+    size_t pin_pulldown_call_count;
     fake_hal_switch_t switches[FAKE_HAL_MAX_SWITCHES];
     size_t switch_count;
 } fake_hal_t;

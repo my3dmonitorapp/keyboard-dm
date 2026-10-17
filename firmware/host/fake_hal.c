@@ -10,6 +10,7 @@ static kb_hal_error_t pin_direction(void *context, uint8_t pin,
         (direction != KB_HAL_PIN_INPUT && direction != KB_HAL_PIN_OUTPUT)) {
         return KB_HAL_ERR_INVALID_ARGUMENT;
     }
+    ++fake->pin_direction_call_count;
     fake->pin_directions[pin] = direction;
     return KB_HAL_OK;
 }
@@ -66,6 +67,7 @@ static kb_hal_error_t pin_pulldown(void *context, uint8_t pin, bool enabled)
     if (fake == NULL || pin >= FAKE_HAL_MAX_PINS) {
         return KB_HAL_ERR_INVALID_ARGUMENT;
     }
+    ++fake->pin_pulldown_call_count;
     fake->pin_pulldowns[pin] = enabled;
     return KB_HAL_OK;
 }

@@ -7,6 +7,9 @@ operation.
 ## Layout
 
 - `shared/include/` and `shared/src/` contain the dependency-free C11 core.
+- `kb_runtime` gates scanner startup on validated boot state, schedules matrix
+  scans, dispatches events into HID state, and incrementally services the
+  serial protocol from caller-supplied bytes and time.
 - `host/` contains the fake HAL, test harness, JSON fixture corpus, and Makefile.
 - `components/kbdm_core/` references (and never copies) every shared C source.
 - `components/kbdm_idf_hal/` implements LEDC/GPIO matrix I/O, NVS A/B storage,
@@ -34,9 +37,10 @@ required or attempted.
 
 The current suite covers config validation and structured field errors,
 canonical config JSON round trips and CRC checking, valid/malformed protocol
-fixtures with output-integrity checks, CRC32 known vectors, and fake-HAL fault
-injection. `clean test` first removes `firmware/host/build/`, so stale objects
-cannot affect the result.
+fixtures with output-integrity checks, CRC32 known vectors, fake-HAL fault
+injection, and end-to-end runtime gating/scanning/HID/config-update behavior.
+`clean test` first removes `firmware/host/build/`, so stale objects cannot
+affect the result.
 
 ## ESP-IDF builds
 

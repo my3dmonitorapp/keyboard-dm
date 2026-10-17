@@ -4,6 +4,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define JSON_TOKENS 128U
@@ -388,22 +389,33 @@ static kb_protocol_apply_result_t commit_upload(kb_protocol_context_t *context,
                                                 char *response, size_t capacity,
                                                 size_t *length)
 {
-    kb_config_t config;
+    kb_config_t *config;
     uint32_t expected = context->upload_expected_crc32;
     kb_boot_result_t boot_result;
     if (!context->upload_active || context->boot == NULL)
         return error_response(request->id, "bad_state", response, capacity, length, KB_PROTOCOL_APPLY_BAD_STATE);
+    config = malloc(sizeof(*config));
+    if (config == NULL) {
+        context->upload_active = false;
+        return error_response(request->id, "hal_error", response, capacity,
+                              length, KB_PROTOCOL_APPLY_HAL_ERROR);
+    }
     if (request->command == KB_PROTOCOL_COMMAND_CONFIG_COMMIT && request->args.commit.has_crc32)
         expected = request->args.commit.config_crc32;
     if (context->upload_length != context->upload_total || kb_crc32(context->upload_bytes, context->upload_length) != expected) {
         context->upload_active = false;
+        free(config);
         return error_response(request->id, "bad_crc", response, capacity, length, KB_PROTOCOL_APPLY_BAD_CONFIG);
     }
-    if (kb_config_from_json((const char *)context->upload_bytes, context->upload_length, &config) != KB_CONFIG_PARSE_OK) {
+    if (kb_config_from_json((const char *)context->upload_bytes,
+                            context->upload_length, config) !=
+        KB_CONFIG_PARSE_OK) {
         context->upload_active = false;
+        free(config);
         return error_response(request->id, "bad_config", response, capacity, length, KB_PROTOCOL_APPLY_BAD_CONFIG);
     }
-    boot_result = kb_boot_apply_config(context->boot, &config);
+    boot_result = kb_boot_apply_config(context->boot, config);
+    free(config);
     context->upload_active = false;
     if (boot_result != KB_BOOT_OK)
         return error_response(request->id, boot_result == KB_BOOT_STORAGE_ERROR ? "hal_error" : "bad_config", response, capacity, length,
@@ -449,13 +461,25 @@ kb_protocol_apply_result_t kb_protocol_apply_cmd(
         return commit_upload(context, request, response, capacity, length);
     case KB_PROTOCOL_COMMAND_CONFIG_GET: {
         const kb_config_t *config = context->boot == NULL ? NULL : kb_boot_active_config(context->boot);
-        char json[KB_PROTOCOL_MAX_UPLOAD_BYTES + 1U]; size_t json_length;
+        char *json; size_t json_length;
         if (config == NULL || request->args.config_get.last_good)
             return error_response(request->id, "not_found", response, capacity, length, KB_PROTOCOL_APPLY_BAD_STATE);
-        if (kb_config_to_json(config, json, sizeof(json), &json_length) != KB_CONFIG_PARSE_OK)
+        json = malloc(KB_PROTOCOL_MAX_UPLOAD_BYTES + 1U);
+        if (json == NULL)
+            return error_response(request->id, "hal_error", response, capacity, length, KB_PROTOCOL_APPLY_HAL_ERROR);
+        if (kb_config_to_json(config, json, KB_PROTOCOL_MAX_UPLOAD_BYTES + 1U,
+                              &json_length) != KB_CONFIG_PARSE_OK) {
+            free(json);
             return error_response(request->id, "bad_config", response, capacity, length, KB_PROTOCOL_APPLY_BAD_CONFIG);
-        return response_write(response, capacity, length, "{\"id\":\"%s\",\"ok\":true,\"result\":{\"config\":%s}}", request->id, json)
-            ? KB_PROTOCOL_APPLY_OK : KB_PROTOCOL_APPLY_BUFFER_TOO_SMALL;
+        }
+        {
+            const bool written = response_write(response, capacity, length,
+                "{\"id\":\"%s\",\"ok\":true,\"result\":{\"config\":%s}}",
+                request->id, json);
+            free(json);
+            return written ? KB_PROTOCOL_APPLY_OK
+                           : KB_PROTOCOL_APPLY_BUFFER_TOO_SMALL;
+        }
     }
     case KB_PROTOCOL_COMMAND_KEY_EVENT:
         context->key_events_enabled = request->args.key_event.enabled;

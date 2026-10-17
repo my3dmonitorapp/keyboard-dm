@@ -31,4 +31,19 @@ config KBDM_SERIAL_BAUD
         Applied to UART0 on classic ESP32. USB Serial/JTAG on ESP32-C3 is a
         USB transport and does not have a physical UART baud rate.
 
+config KBDM_SCAN_PERIOD_MS
+    int "Runtime scan period (milliseconds)"
+    range 1 100
+    default 1
+
+config KBDM_RUNTIME_TASK_STACK
+    int "Runtime task stack size (bytes)"
+    range 12288 32768
+    default 16384
+
+config KBDM_RUNTIME_TASK_PRIORITY
+    int "Runtime task priority"
+    range 1 20
+    default 5
+
 endmenu

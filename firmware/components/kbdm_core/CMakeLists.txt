@@ -9,6 +9,7 @@ idf_component_register(
         "${KBDM_SHARED}/src/kb_events.c"
         "${KBDM_SHARED}/src/kb_hid.c"
         "${KBDM_SHARED}/src/kb_protocol.c"
+        "${KBDM_SHARED}/src/kb_runtime.c"
         "${KBDM_SHARED}/src/kb_scanner.c"
     INCLUDE_DIRS "${KBDM_SHARED}/include")
 

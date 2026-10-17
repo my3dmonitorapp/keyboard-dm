@@ -8,8 +8,8 @@ no hardware touched, no flashing.
 
 | Target   | Result | App binary                | Size        | SHA-256 |
 |----------|--------|---------------------------|-------------|---------|
-| esp32    | PASS   | kbdm_esp32.bin            | 0xc0020 (50% free)       | 5bba19ae6a39769095d975b4ae668e69deed6110383464383b4133572686421b |
-| esp32c3  | PASS   | kbdm_esp32c3.bin          | 0xcff30 (46% free)       | 3a48f1b011dc3d53dac1874da89ef36c10b660163a4fd43649941ea262ba6a44 |
+| esp32    | PASS   | kbdm_esp32.bin            | 0xc0020 (50% free)       | 5a76b522e9566a8b07019ba0e4cc3f7ffe7980f0c28c92e9b914dae581766a4d |
+| esp32c3  | PASS   | kbdm_esp32c3.bin          | 0xcff30 (46% free)       | 521b73ce60e2ce6d4da0b88a98a35d0877cb2d2d46c18f5a544dccb603d44f4f |
 
 Supporting artifacts (esp32 build):
 - bootloader.bin        6ce4a70678b58133508912fd19155f15a5c097052eee17889b8f33bee43c790f

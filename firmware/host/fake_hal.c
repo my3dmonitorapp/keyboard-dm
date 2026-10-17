@@ -23,6 +23,9 @@ static kb_hal_error_t pin_write(void *context, uint8_t pin,
         (value != KB_HAL_PIN_LOW && value != KB_HAL_PIN_HIGH)) {
         return KB_HAL_ERR_INVALID_ARGUMENT;
     }
+    if (fake->pin_write_call_count < FAKE_HAL_MAX_PIN_CALLS) {
+        fake->pin_write_calls[fake->pin_write_call_count++] = pin;
+    }
     fake->pin_values[pin] = value;
     return KB_HAL_OK;
 }
@@ -34,7 +37,23 @@ static kb_hal_error_t pin_read(void *context, uint8_t pin,
     if (fake == NULL || value == NULL || pin >= FAKE_HAL_MAX_PINS) {
         return KB_HAL_ERR_INVALID_ARGUMENT;
     }
+    if (fake->pin_read_call_count < FAKE_HAL_MAX_PIN_CALLS) {
+        fake->pin_read_calls[fake->pin_read_call_count++] = pin;
+    }
     *value = fake->pin_values[pin];
+    {
+        size_t index;
+        for (index = 0U; index < fake->switch_count; ++index) {
+            const fake_hal_switch_t *item = &fake->switches[index];
+            const uint8_t other = item->pin_a == pin ? item->pin_b : item->pin_a;
+            if (item->closed && (item->pin_a == pin || item->pin_b == pin) &&
+                fake->pin_directions[other] == KB_HAL_PIN_OUTPUT &&
+                fake->pin_values[other] == KB_HAL_PIN_LOW) {
+                *value = KB_HAL_PIN_LOW;
+                break;
+            }
+        }
+    }
     if (fake->corrupt_pin_reads) {
         *value = *value == KB_HAL_PIN_LOW ? KB_HAL_PIN_HIGH : KB_HAL_PIN_LOW;
     }
@@ -108,11 +127,24 @@ static kb_hal_error_t store_write(void *context, kb_hal_store_slot_t slot,
     injected = fake->next_store_write_error;
     fake->next_store_write_error = KB_HAL_OK;
     if (injected != KB_HAL_OK) {
+        if (fake->next_store_write_partial_bytes != 0U) {
+            size_t partial = fake->next_store_write_partial_bytes;
+            if (partial > length) {
+                partial = length;
+            }
+            if (partial > FAKE_HAL_STORE_CAPACITY) {
+                partial = FAKE_HAL_STORE_CAPACITY;
+            }
+            memcpy(fake->stores[slot], buffer, partial);
+            fake->store_lengths[slot] = partial;
+        }
+        fake->next_store_write_partial_bytes = 0U;
         return injected;
     }
     if (length > FAKE_HAL_STORE_CAPACITY) {
         return KB_HAL_ERR_NO_SPACE;
     }
+    fake->next_store_write_partial_bytes = 0U;
     memcpy(fake->stores[slot], buffer, length);
     fake->store_lengths[slot] = length;
     return KB_HAL_OK;
@@ -177,8 +209,38 @@ static kb_hal_error_t ble_send(void *context, const void *buffer, size_t length)
 void fake_hal_reset(fake_hal_t *fake)
 {
     if (fake != NULL) {
+        size_t index;
         memset(fake, 0, sizeof(*fake));
+        for (index = 0U; index < FAKE_HAL_MAX_PINS; ++index) {
+            fake->pin_values[index] = KB_HAL_PIN_HIGH;
+        }
     }
+}
+
+bool fake_hal_set_switch(fake_hal_t *fake, uint8_t pin_a, uint8_t pin_b,
+                         bool closed)
+{
+    size_t index;
+    if (fake == NULL || pin_a >= FAKE_HAL_MAX_PINS ||
+        pin_b >= FAKE_HAL_MAX_PINS || pin_a == pin_b) {
+        return false;
+    }
+    for (index = 0U; index < fake->switch_count; ++index) {
+        fake_hal_switch_t *item = &fake->switches[index];
+        if ((item->pin_a == pin_a && item->pin_b == pin_b) ||
+            (item->pin_a == pin_b && item->pin_b == pin_a)) {
+            item->closed = closed;
+            return true;
+        }
+    }
+    if (fake->switch_count == FAKE_HAL_MAX_SWITCHES) {
+        return false;
+    }
+    fake->switches[fake->switch_count].pin_a = pin_a;
+    fake->switches[fake->switch_count].pin_b = pin_b;
+    fake->switches[fake->switch_count].closed = closed;
+    ++fake->switch_count;
+    return true;
 }
 
 kb_hal_ops_t fake_hal_ops(fake_hal_t *fake)

@@ -167,6 +167,16 @@ TEST(scan_diode_pair_must_match)
     expect_error(&config, KB_CONFIG_ERROR_SCAN_DIODE_MISMATCH);
 }
 
+TEST(debounce_defaults_and_range_are_validated)
+{
+    kb_config_t config = minimal();
+    ASSERT_EQ_U32(KB_CONFIG_DEFAULT_DEBOUNCE_MS, config.debounce_ms);
+    config.debounce_ms = KB_CONFIG_MIN_DEBOUNCE_MS - 1U;
+    expect_error(&config, KB_CONFIG_ERROR_DEBOUNCE_RANGE);
+    config.debounce_ms = KB_CONFIG_MAX_DEBOUNCE_MS + 1U;
+    expect_error(&config, KB_CONFIG_ERROR_DEBOUNCE_RANGE);
+}
+
 TEST(canonical_switch_order_is_row_major)
 {
     kb_config_t config = minimal();
@@ -228,6 +238,7 @@ static const test_case_t cases[] = {
     TEST_CASE(input_only_row_pin),
     TEST_CASE(external_pullup_required),
     TEST_CASE(scan_diode_pair_must_match),
+    TEST_CASE(debounce_defaults_and_range_are_validated),
     TEST_CASE(canonical_switch_order_is_row_major),
     TEST_CASE(canonical_round_trip)
 };

@@ -97,3 +97,28 @@ F0 mentions CRC plus SHA-256 for persistence/transfer. This foundation provides
 the required CRC32 for canonical config integrity. Transfer SHA-256 remains a
 protocol/storage implementation concern for T3 and is not silently replaced by
 CRC32.
+
+## Scanner and configuration governance state machines
+
+The scanner configures only the selected drive side as an output, one line at a
+time, and immediately returns it to high impedance. The opposite side remains
+input-only. Sparse populated intersections alone own debounce state and emit
+events; reads still cover every input line so the electrical scan is complete.
+Debounce is time-based on both edges, defaults to 25 ms, and validates in the
+inclusive 5–100 ms range. `switch_id` is the stable zero-based index in the
+validated populated list; action translation remains downstream work.
+
+Boot persistence uses canonical JSON in A/B slots and a CRC-protected metadata
+record containing active and last-good slot/generation. A commit writes and
+reads back the inactive slot before publishing metadata, so a failed or partial
+slot write cannot change the active generation. Recovery consumes the
+last-good pointer: a second recovery at that generation is a no-op. This
+generation rule deliberately prevents A/B/A oscillation (the ABA case); a new
+successful config commit establishes a new last-good pointer. Empty storage is
+`NO_CONFIG`, while present-but-invalid data or corrupt metadata enters
+`SAFE_MODE`. Neither state invokes scanner initialization or GPIO operations.
+
+Host persistence currently bounds a canonical config blob at 8192 bytes, which
+matches the fake HAL slot capacity. Transfer hashing, protocol parsing, action
+dispatch, scan settling delays, and target-specific pull-up setup remain later
+integration work.

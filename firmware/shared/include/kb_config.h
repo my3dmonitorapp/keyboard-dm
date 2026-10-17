@@ -19,6 +19,9 @@
 #define KB_CONFIG_CHIP_CLASS_MAX 16U
 #define KB_CONFIG_PROJECT_NAME_MAX 64U
 #define KB_CONFIG_UPDATED_MAX 40U
+#define KB_CONFIG_DEFAULT_DEBOUNCE_MS 25U
+#define KB_CONFIG_MIN_DEBOUNCE_MS 5U
+#define KB_CONFIG_MAX_DEBOUNCE_MS 100U
 
 typedef enum {
     KB_SCAN_DRIVE_ROWS_LOW_READ_COLS_PULLUP = 0,
@@ -98,6 +101,7 @@ typedef struct {
     char chip_class[KB_CONFIG_CHIP_CLASS_MAX];
     kb_matrix_config_t matrix;
     kb_pinmap_config_t pinmap;
+    uint16_t debounce_ms;
     kb_diode_scope_t diode_scope;
     kb_diode_direction_t board_diode_direction;
     uint16_t switch_count;
@@ -130,9 +134,11 @@ typedef enum {
     KB_CONFIG_ERROR_RESERVED_PIN,
     KB_CONFIG_ERROR_INPUT_ONLY_OUTPUT_PIN,
     KB_CONFIG_ERROR_EXTERNAL_PULLUP_REQUIRED,
+    KB_CONFIG_ERROR_SWITCH_COUNT,
     KB_CONFIG_ERROR_POPULATED_OUT_OF_RANGE,
     KB_CONFIG_ERROR_DUPLICATE_SWITCH,
     KB_CONFIG_ERROR_SCAN_DIODE_MISMATCH,
+    KB_CONFIG_ERROR_DEBOUNCE_RANGE,
     KB_CONFIG_ERROR_ACTION_TYPE,
     KB_CONFIG_ERROR_HID_USAGE,
     KB_CONFIG_ERROR_SHORTCUT_MODIFIERS,

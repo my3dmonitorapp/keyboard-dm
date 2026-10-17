@@ -316,6 +316,8 @@ static void serialize_config(json_writer_t *writer, const kb_config_t *config,
     writer_string(writer, scan_mode_name(config->pinmap.scan_mode));
     writer_text(writer, ",\"pull_up_source\":");
     writer_string(writer, pullup_name(config->pinmap.pull_up_source));
+    writer_text(writer, ",\"debounce_ms\":");
+    writer_uint(writer, config->debounce_ms);
     writer_text(writer, ",\"diode_direction\":");
     if (config->diode_scope == KB_DIODE_SCOPE_BOARD) {
         writer_string(writer, diode_name(config->board_diode_direction));
@@ -386,6 +388,7 @@ void kb_config_init(kb_config_t *config)
     (void)snprintf(config->chip_class, sizeof(config->chip_class), "%s", "generic");
     config->pinmap.scan_mode = KB_SCAN_DRIVE_ROWS_LOW_READ_COLS_PULLUP;
     config->pinmap.pull_up_source = KB_PULL_UP_INTERNAL;
+    config->debounce_ms = KB_CONFIG_DEFAULT_DEBOUNCE_MS;
     config->diode_scope = KB_DIODE_SCOPE_BOARD;
     config->board_diode_direction = KB_DIODE_COL_TO_ROW;
     config->meta.project_version = 3U;
@@ -522,6 +525,15 @@ bool kb_config_validate(const kb_config_t *config, const kb_hal_probe_t *probe,
     }
     if (config->pinmap.col_pin_count != config->matrix.cols) {
         add_error(errors, KB_CONFIG_ERROR_COL_PIN_COUNT, "matrix.col_pins", -1, -1);
+    }
+    if (config->debounce_ms < KB_CONFIG_MIN_DEBOUNCE_MS ||
+        config->debounce_ms > KB_CONFIG_MAX_DEBOUNCE_MS) {
+        add_error(errors, KB_CONFIG_ERROR_DEBOUNCE_RANGE,
+                  "matrix.debounce_ms", -1, -1);
+    }
+    if (config->switch_count > KB_CONFIG_MAX_KEYS) {
+        add_error(errors, KB_CONFIG_ERROR_SWITCH_COUNT,
+                  "matrix.populated", -1, -1);
     }
     for (index = 0U; index < config->pinmap.row_pin_count &&
                      index < KB_CONFIG_MAX_ROWS; ++index) {
@@ -1500,7 +1512,7 @@ static kb_config_parse_code_t parse_matrix(const json_document_t *document,
 {
     static const char *const fields[] = {
         "rows", "cols", "row_pins", "col_pins", "scan_mode",
-        "pull_up_source", "diode_direction", "populated"
+        "pull_up_source", "debounce_ms", "diode_direction", "populated"
     };
     int rows_token;
     int cols_token;
@@ -1508,6 +1520,7 @@ static kb_config_parse_code_t parse_matrix(const json_document_t *document,
     int col_pins_token;
     int scan_token;
     int pullup_token;
+    int debounce_token;
     int diode_token;
     int populated_token;
     uint32_t value;
@@ -1526,11 +1539,12 @@ static kb_config_parse_code_t parse_matrix(const json_document_t *document,
     col_pins_token = object_get(document, (size_t)token_index, "col_pins");
     scan_token = object_get(document, (size_t)token_index, "scan_mode");
     pullup_token = object_get(document, (size_t)token_index, "pull_up_source");
+    debounce_token = object_get(document, (size_t)token_index, "debounce_ms");
     diode_token = object_get(document, (size_t)token_index, "diode_direction");
     populated_token = object_get(document, (size_t)token_index, "populated");
     if (rows_token < 0 || cols_token < 0 || row_pins_token < 0 ||
         col_pins_token < 0 || scan_token < 0 || pullup_token < 0 ||
-        diode_token < 0 || populated_token < 0) {
+        debounce_token < 0 || diode_token < 0 || populated_token < 0) {
         return KB_CONFIG_PARSE_MISSING_FIELD;
     }
     if (!parse_uint(document, (size_t)rows_token, UINT8_MAX, &value)) {
@@ -1571,6 +1585,10 @@ static kb_config_parse_code_t parse_matrix(const json_document_t *document,
     } else {
         return KB_CONFIG_PARSE_VALUE_RANGE;
     }
+    if (!parse_uint(document, (size_t)debounce_token, UINT16_MAX, &value)) {
+        return KB_CONFIG_PARSE_WRONG_TYPE;
+    }
+    config->debounce_ms = (uint16_t)value;
     result = parse_populated(document, populated_token, config);
     if (result != KB_CONFIG_PARSE_OK) {
         return result;

@@ -1,0 +1,2 @@
+rsource "../../../Kconfig.projbuild"
+rsource "../boards/unverified/Kconfig"

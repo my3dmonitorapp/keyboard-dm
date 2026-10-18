@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable
 
 from .esptool_adapter import (
@@ -147,12 +148,14 @@ class InstallerEngine:
         *,
         phase_callbacks: list[Callable[[InstallerState, str], None]] | None = None,
         reconnect_probe: Callable[[PortInfo], int] | None = None,
+        repo_root: str | None = None,
         is_mock: bool = True,
     ) -> None:
         self._backend = backend
         self._gate = gate
         self._artifacts = artifact_source
-        self._backup_dir = backup_dir
+        self._backup_dir = Path(backup_dir)
+        self._repo_root = repo_root
         self._phase_callbacks = phase_callbacks or []
         self._reconnect_probe = reconnect_probe or (lambda port: PROTOCOL_VERSION)
         self._is_mock = is_mock
@@ -310,6 +313,9 @@ class InstallerEngine:
         import hashlib
         import os
 
+        from .backup import BackupService
+
+        self._backup_dir.mkdir(parents=True, exist_ok=True)
         self._gate.require_read_only(self._is_mock)
         size = chip.flash_size_bytes
         data = self._backend.read_flash(port, size)
@@ -318,13 +324,10 @@ class InstallerEngine:
                 f"full flash readback returned {len(data)} of {size} bytes",
                 recovery="readback incomplete; retry before flashing",
             )
-        digest = hashlib.sha256(data).hexdigest()
-        os.makedirs(self._backup_dir, exist_ok=True)
-        name = backup_name or (f"backup-{port.device.replace('/', '_')}-{digest[:12]}.bin")
-        path = os.path.join(self._backup_dir, name)
-        with open(path, "wb") as fh:
-            fh.write(data)
-        return path, digest
+        record = BackupService.write_record(
+            self._backup_dir, port, chip, data, label=backup_name or "pre-flash"
+        )
+        return record.path, record.digest
 
     def _flash_progress(self, done: int, total: int, off: str) -> None:
         self._detail = f"{done}/{total} images written (next {off})"

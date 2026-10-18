@@ -13,6 +13,24 @@ reflash.
 ESP32 and ESP32-C3 are the only chip families in v0.1 scope. ESP32-S3 is a
 future-adapter-only target. No new chip families will be added in v0.1.
 
+## Physical hardware targets (clarified 2026-10-18)
+
+1. **ESP32-C3 Super Mini** — the existing nine-key keyboard. FIRST physical
+   acceptance test (checkpoint 4). The firmware target already exists
+   (`kbdm_esp32c3.bin`).
+2. **Classic ESP32 DevKit V1 (ESP32-WROOM-32)** — the user's handmade 68-key
+   keyboard, tested afterward. The firmware target already exists
+   (`kbdm_esp32.bin`).
+
+Both use the same universal configurator: matrix size, GPIO layout and key
+assignments are entered per device with per-family validation — no
+per-keyboard recompilation. The two chip families keep distinct adapters for
+their transport difference: native USB Serial/JTAG on the C3 versus
+USB-UART on the classic ESP32. The earlier reference to ESP32-S3 was a
+mistake; no S3 work is in scope. Testing the 68-key DevKit after the C3
+acceptance test does not count as a new v0.1 checkpoint — both chip-family
+firmware targets already exist.
+
 ## Exactly four remaining checkpoints
 
 1. **F3-T6 — main-window installer integration.** The existing installer panel

@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -48,6 +49,7 @@ from .device import SimulatedESP32S3Device
 from .esp32_gpio import PinRole, suggest_safe_pins, validate_gpio_pin
 from .layout_model import Key, Layout
 from .layouts import BUILT_IN_LAYOUTS, L75, make_custom_layout
+from .installer_panel import InstallerPanel
 from .matrix_model import (
     DEFAULT_WIDTH_HALF_UNITS,
     MAX_WIDTH_HALF_UNITS,
@@ -728,6 +730,7 @@ class Keyboard75Window(QMainWindow):
         self.setStyleSheet(DARK_STYLESHEET)
         self._build_file_menu()
         self._build_layout_menu()
+        self._build_tools_menu()
 
         central_widget = QWidget(self)
         root_layout = QVBoxLayout(central_widget)
@@ -738,18 +741,44 @@ class Keyboard75Window(QMainWindow):
         self.layout_banner = self._build_provisional_banner()
         root_layout.addWidget(self.layout_banner)
 
-        self.content_layout = QHBoxLayout()
+        self.page_stack = QStackedWidget(self)
+        self.page_stack.setObjectName("mainPageStack")
+
+        self.editor_page = QWidget(self.page_stack)
+        self.editor_page.setObjectName("editorPage")
+        self.content_layout = QHBoxLayout(self.editor_page)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
         self.content_layout.setSpacing(16)
         self.key_grid_container = self._build_key_grid()
         self.content_layout.addWidget(self.key_grid_container, stretch=1)
         self.inspector = self._build_inspector()
         self.content_layout.addWidget(self.inspector)
-        root_layout.addLayout(self.content_layout, stretch=1)
+        self.page_stack.addWidget(self.editor_page)
+
+        self.installer_panel = InstallerPanel(self.page_stack)
+        self.page_stack.addWidget(self.installer_panel)
+        root_layout.addWidget(self.page_stack, stretch=1)
 
         self.setCentralWidget(central_widget)
         self._build_status_bar()
         self._refresh_profile_status()
         self._resize_for_layout()
+
+    def _build_tools_menu(self) -> None:
+        tools_menu = self.menuBar().addMenu("&Tools")
+        tools_menu.setObjectName("toolsMenu")
+
+        self.firmware_installer_action = QAction("Firmware Installer...", self)
+        self.firmware_installer_action.setObjectName("firmwareInstallerAction")
+        self.firmware_installer_action.setCheckable(True)
+        self.firmware_installer_action.toggled.connect(self.show_installer_page)
+        tools_menu.addAction(self.firmware_installer_action)
+
+    def show_installer_page(self, visible: bool = True) -> None:
+        """Show the installer page, or return to the editor when unchecked."""
+        self.page_stack.setCurrentWidget(
+            self.installer_panel if visible else self.editor_page
+        )
 
     def _build_file_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")

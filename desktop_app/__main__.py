@@ -296,9 +296,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     from PySide6.QtWidgets import QApplication
 
     from .app import Keyboard75Window
+    from .fw_protocol_client import InMemoryFirmwareProtocol
 
     application = QApplication(sys.argv)
-    window = Keyboard75Window()
+    # This milestone deliberately exposes configuration upload only through an
+    # injected in-memory transport; it never discovers or opens a serial port.
+    window = Keyboard75Window(
+        firmware_transport=InMemoryFirmwareProtocol(profile="esp32"),
+        firmware_chip_class="esp32",
+    )
     window.show()
     return application.exec()
 

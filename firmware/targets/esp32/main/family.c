@@ -2,11 +2,15 @@
 #include "driver/uart.h"
 #include "sdkconfig.h"
 
-/* Silicon/module restrictions, not a board wiring assignment. */
+/* Silicon/module restrictions, not a board wiring assignment.
+ * GPIO0/2/5/12/15 are documented boot straps; GPIO6-11 connect to flash.
+ * GPIO20/24/28-31 are unavailable, while GPIO34-39 are input-only and need
+ * external pull-ups. GPIO16/17 are regular DevKit GPIOs, so they stay free.
+ */
 static const kb_hal_probe_t capabilities = {
     .pin_count = 40,
-    .reserved_pin_count = 19,
-    .reserved_pins = {0, 2, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17,
+    .reserved_pin_count = 17,
+    .reserved_pins = {0, 2, 5, 6, 7, 8, 9, 10, 11, 12, 15,
                       20, 24, 28, 29, 30, 31},
     .input_only_pin_count = 6,
     .input_only_pins = {34, 35, 36, 37, 38, 39},

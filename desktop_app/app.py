@@ -47,6 +47,11 @@ from .action import (
 )
 from .device import SimulatedESP32S3Device
 from .esp32_gpio import PinRole, suggest_safe_pins, validate_gpio_pin
+from .fw_protocol_client import (
+    FirmwareProtocolClient,
+    FirmwareProtocolError,
+    FirmwareTransport,
+)
 from .layout_model import Key, Layout
 from .layouts import BUILT_IN_LAYOUTS, L75, make_custom_layout
 from .installer_panel import InstallerPanel
@@ -71,6 +76,12 @@ from .project import (
     load_project as load_project_file,
     project_path,
     save_project as save_project_file,
+)
+from .serialization import (
+    SerializationError,
+    action_to_firmware,
+    firmware_config_json,
+    stable_json_bytes,
 )
 
 
@@ -701,6 +712,8 @@ class Keyboard75Window(QMainWindow):
         self,
         layout: Layout | None = None,
         device: SimulatedESP32S3Device | None = None,
+        firmware_transport: FirmwareTransport | None = None,
+        firmware_chip_class: str = "esp32",
     ) -> None:
         super().__init__()
         self.layout = Layout.from_dict((layout or L75).to_dict())
@@ -713,6 +726,8 @@ class Keyboard75Window(QMainWindow):
         if device is not None:
             self.device.set_key_ids(key.key_id for key in self.layout.keys)
         self.device.add_pressed_state_listener(self.refresh_pressed_key_highlights)
+        self._firmware_transport = firmware_transport
+        self._firmware_chip_class = firmware_chip_class
         self.selected_key: Key | None = None
         self.key_widgets: dict[str, QPushButton] = {}
         self.profile: dict[str, object] | None = None
@@ -738,6 +753,15 @@ class Keyboard75Window(QMainWindow):
         root_layout.setSpacing(12)
 
         root_layout.addWidget(self._build_top_bar())
+        self.upload_status_label = QLabel(central_widget)
+        self.upload_status_label.setObjectName("configurationUploadStatusLabel")
+        self.upload_status_label.setWordWrap(True)
+        self.upload_status_label.setText(
+            "Configuration upload: ready"
+            if firmware_transport is not None
+            else "Configuration upload: unavailable (no simulated transport injected)"
+        )
+        root_layout.addWidget(self.upload_status_label)
         self.layout_banner = self._build_provisional_banner()
         root_layout.addWidget(self.layout_banner)
 
@@ -774,11 +798,137 @@ class Keyboard75Window(QMainWindow):
         self.firmware_installer_action.toggled.connect(self.show_installer_page)
         tools_menu.addAction(self.firmware_installer_action)
 
+        self.upload_configuration_action = QAction(
+            "Upload configuration to device", self
+        )
+        self.upload_configuration_action.setObjectName("uploadConfigurationAction")
+        self.upload_configuration_action.setEnabled(
+            self._firmware_transport is not None
+        )
+        self.upload_configuration_action.triggered.connect(
+            self.upload_configuration_to_device
+        )
+        tools_menu.addAction(self.upload_configuration_action)
+
     def show_installer_page(self, visible: bool = True) -> None:
         """Show the installer page, or return to the editor when unchecked."""
         self.page_stack.setCurrentWidget(
             self.installer_panel if visible else self.editor_page
         )
+
+    def _current_project_document(self) -> dict[str, Any]:
+        """Build the active editor state without changing its saved-project state."""
+        assignments = {key.key_id: key.assignment for key in self.layout.keys}
+        return create_project(
+            self.current_project_name or self.layout.name,
+            self.layout,
+            assignments,
+            self.current_profile_path,
+            self.matrix_config if self.layout.label == "matrix" else None,
+        )
+
+    def _unsupported_firmware_action_ids(
+        self, document: dict[str, Any]
+    ) -> list[str]:
+        """Return key IDs that cannot be activated by schema-v1 firmware."""
+        unsupported: list[str] = []
+        keys = document.get("keys", {})
+        if not isinstance(keys, dict):
+            return unsupported
+        supported_types = {"key", "modifier", "shortcut", "media"}
+        for key_id, key_data in keys.items():
+            if not isinstance(key_data, dict):
+                unsupported.append(str(key_id))
+                continue
+            try:
+                payload = action_to_firmware(key_data.get("assignment"))
+            except SerializationError:
+                unsupported.append(str(key_id))
+                continue
+            if payload is not None and payload.get("type") not in supported_types:
+                unsupported.append(str(key_id))
+        return sorted(unsupported)
+
+    def _set_upload_phases(self, phases: list[str]) -> None:
+        self.upload_status_label.setText("\n".join(phases))
+        self.statusBar().showMessage(phases[-1], 5000)
+
+    def upload_configuration_to_device(self) -> bool:
+        """Provision through the injected simulator/mock transport and verify it."""
+        phases: list[str] = []
+        transport = self._firmware_transport
+        if transport is None:
+            self._set_upload_phases(
+                ["FAILED: no simulated firmware transport was injected"]
+            )
+            return False
+
+        # Complete the unsupported-action and schema preflight before the first
+        # transport request so an invalid project can never become a partial upload.
+        try:
+            document = self._current_project_document()
+            unsupported_ids = self._unsupported_firmware_action_ids(document)
+            if unsupported_ids:
+                raise SerializationError(
+                    "Unsupported firmware actions on key IDs: "
+                    + ", ".join(unsupported_ids)
+                )
+            firmware_config_json(
+                document, chip_class=self._firmware_chip_class, generation=0
+            )
+        except (ProjectError, SerializationError, TypeError, ValueError) as error:
+            self._set_upload_phases([f"FAILED: preflight rejected: {error}"])
+            return False
+
+        client = FirmwareProtocolClient(transport)
+        try:
+            status = client.status()
+            generation = status.get("active_generation")
+            if type(generation) is not int or generation < 0:
+                raise FirmwareProtocolError(
+                    "invalid_response", "active generation is missing"
+                )
+            raw = firmware_config_json(
+                document,
+                chip_class=self._firmware_chip_class,
+                generation=generation + 1,
+            )
+            phases.append(f"Upload sent ({len(raw)} bytes)")
+            self._set_upload_phases(phases)
+            try:
+                committed = client.upload_config(raw)
+            except FirmwareProtocolError as error:
+                phases.append(f"Commit rejected: {error}")
+                raise
+            phases.append(
+                f"Commit accepted (generation {committed.get('generation')})"
+            )
+            self._set_upload_phases(phases)
+
+            if stable_json_bytes(client.get_config()) != raw:
+                raise FirmwareProtocolError(
+                    "readback_mismatch", "active configuration differs from upload"
+                )
+            phases.append("Identical readback verified")
+            self._set_upload_phases(phases)
+
+            reboot_status = client.reboot()
+            if (
+                reboot_status.get("state") != 2
+                or reboot_status.get("active_generation") != committed.get("generation")
+                or stable_json_bytes(client.get_config()) != raw
+            ):
+                raise FirmwareProtocolError(
+                    "persistence_mismatch",
+                    "configuration changed after simulated reboot",
+                )
+            phases.append("Persistence after simulated reboot verified")
+            self._set_upload_phases(phases)
+            return True
+        except Exception as error:
+            phases.append(f"FAILED: {error}")
+            self._set_upload_phases(phases)
+            return False
 
     def _build_file_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")

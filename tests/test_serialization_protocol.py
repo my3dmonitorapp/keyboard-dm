@@ -118,6 +118,20 @@ def test_overlong_and_bad_upload_crc_are_rejected() -> None:
     assert client.status()["state"] == 0
 
 
+def test_simulator_rejects_unsupported_config_without_mutation() -> None:
+    endpoint = InMemoryFirmwareProtocol(profile="esp32c3")
+    client = FirmwareProtocolClient(endpoint)
+    config = json.loads(
+        firmware_config_json(matrix_project(), chip_class="esp32c3")
+    )
+    config["actions"]["MX-00-00"] = {"type": "legacy", "raw": "custom"}
+
+    with pytest.raises(FirmwareProtocolError, match="bad_config"):
+        client.upload_config(with_embedded_crc(config))
+
+    assert client.status() == {"state": 0, "active_generation": 0}
+
+
 def test_interrupted_upload_timeout_leaves_active_config_unchanged() -> None:
     endpoint = InMemoryFirmwareProtocol(profile="esp32c3")
     client = FirmwareProtocolClient(endpoint, chunk_size=128)

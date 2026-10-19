@@ -59,18 +59,19 @@ def test_input_only_pins_need_external_resistors_for_input(pin: int) -> None:
 @pytest.mark.parametrize(
     ("pin", "reason"),
     [
-        (0, "boot state"),
-        (2, "boot state"),
-        (5, "PWM at boot"),
-        (12, "1.8V flash"),
-        (15, "boot log"),
+        (0, "VDDSDIO 1.8V/3.3V"),
+        (2, "RTC/boot"),
+        (5, "USB D-"),
+        (12, "LOW at boot enters download mode"),
+        (15, "VSPI/HSPI"),
     ],
 )
-def test_strapping_pins_warn_without_blocking(pin: int, reason: str) -> None:
+def test_classic_strapping_pins_are_unavailable(pin: int, reason: str) -> None:
     result = validate_gpio_pin(pin, PinRole.OUTPUT)
 
-    assert result.valid
-    assert reason.lower() in result.warning.lower()
+    assert not result.valid
+    assert "unavailable" in result.error
+    assert reason.lower() in result.error.lower()
 
 
 @pytest.mark.parametrize("pin", [1, 3])
@@ -101,26 +102,26 @@ def test_gpio39_is_allowed_for_an_input_role() -> None:
 
 def test_esp32c3_super_mini_profile_is_capability_only_and_usable() -> None:
     assert ESP32_C3_SUPER_MINI_PROFILE.available_pins == frozenset(
-        (*range(0, 11), 20, 21)
+        (0, 1, 3, 4, 5, 6, 7, 10, 11, 20, 21)
     )
     assert validate_gpio_pin(4, PinRole.OUTPUT, profile="esp32c3").valid
     assert "SPI flash" in validate_gpio_pin(
         12, PinRole.INPUT, profile="esp32c3"
     ).error
-    assert not validate_gpio_pin(11, PinRole.INPUT, profile="esp32c3").valid
+    assert validate_gpio_pin(11, PinRole.INPUT, profile="esp32c3").valid
     assert not validate_gpio_pin(18, PinRole.INPUT, profile="esp32c3").valid
 
 
 @pytest.mark.parametrize("pin", [2, 8, 9])
-def test_esp32c3_strapping_pins_warn(pin: int) -> None:
+def test_esp32c3_strapping_pins_are_unavailable(pin: int) -> None:
     result = validate_gpio_pin(pin, PinRole.OUTPUT, profile="esp32c3")
-    assert result.valid
-    assert "strapping" in result.warning
+    assert not result.valid
+    assert "strapping" in result.error
 
 
 def test_esp32c3_suggestions_avoid_straps_uart_usb_and_invented_wiring() -> None:
-    suggestions = suggest_safe_pins(8, profile="esp32c3")
-    assert suggestions == [0, 1, 3, 4, 5, 6, 7, 10]
+    suggestions = suggest_safe_pins(9, profile="esp32c3")
+    assert suggestions == [0, 1, 3, 4, 5, 6, 7, 10, 11]
     assert set(suggestions).isdisjoint({2, 8, 9, 18, 19, 20, 21})
 
 
@@ -148,14 +149,16 @@ def test_suggestions_are_always_safe_valid_and_unused() -> None:
     assert never_suggest.isdisjoint(suggest_safe_pins(40, used_pins=()))
 
 
-def test_twenty_unique_matrix_pins_fit_on_the_30_pin_board() -> None:
-    rows = list(SAFE_RECOMMENDED_PINS[:5])
-    columns = list(SAFE_RECOMMENDED_PINS[5:]) + [34, 35, 36, 39, 0]
-
-    assert len(rows + columns) == 20
-    assert len(set(rows + columns)) == 20
-    assert all(validate_gpio_pin(pin, PinRole.OUTPUT).valid for pin in rows)
-    assert all(validate_gpio_pin(pin, PinRole.INPUT).valid for pin in columns)
+def test_twenty_pin_matrix_is_three_outputs_short_on_the_30_pin_board() -> None:
+    assert 5 + 15 == 20
+    assert len(SAFE_RECOMMENDED_PINS) == 15
+    usable_outputs = [
+        pin
+        for pin in range(40)
+        if validate_gpio_pin(pin, PinRole.OUTPUT).valid
+    ]
+    assert len(usable_outputs) == 17
+    assert (5 + 15) - len(usable_outputs) == 3
 
 
 def test_pinmap_dialog_shows_specific_rejection_next_to_bad_pin() -> None:
@@ -171,13 +174,12 @@ def test_pinmap_dialog_shows_specific_rejection_next_to_bad_pin() -> None:
     dialog.close()
 
 
-def test_pinmap_dialog_collects_strapping_warnings_in_visible_panel() -> None:
+def test_pinmap_dialog_shows_strapping_pin_as_unavailable() -> None:
     application = QApplication.instance() or QApplication([])
     config = MatrixConfig(rows=1, cols=1, row_pins=[0], column_pins=[4])
     dialog = MatrixPinmapDialog(config)
 
-    assert "Boot/strapping warnings" in dialog.warning_label.text()
-    assert "GPIO 0" in dialog.warning_label.text()
-    assert "boot state" in dialog.warning_label.text()
-    assert dialog.warning_label.isHidden() is False
+    assert "GPIO 0 is unavailable" in dialog.status_label.text()
+    assert "boot state" in dialog.status_label.text()
+    assert dialog.warning_label.text() == ""
     dialog.close()

@@ -14,18 +14,23 @@ from typing import Iterable, Sequence
 GPIO_MIN = 0
 GPIO_MAX = 39
 WROOM_AVAILABLE_PINS = frozenset({
-    0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25,
-    26, 27, 32, 33, 34, 35, 36, 39,
+    1, 3, 4, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33,
+    34, 35, 36, 39,
 })
 
 FLASH_RESERVED_PINS = frozenset({6, 7, 8, 9, 10, 11})
 INPUT_ONLY_PINS = frozenset({34, 35, 36, 39})
 STRAPPING_PIN_WARNINGS = {
-    0: "flash/boot-mode select strapping; LOW at boot holds the board in the bootloader and affects boot state",
-    2: "boot-mode helper strapping and on-board blue LED; the external circuit can affect boot state",
-    5: "VDD_SPI strapping; this pin outputs PWM at boot",
-    12: "VDD_SPI strapping; HIGH at boot selects 1.8V flash and the board will not start",
-    15: "VDD_SPI strapping; LOW at boot silences the boot log, and this pin outputs PWM at boot",
+    # Espressif's classic ESP32 strapping table assigns the VDDSDIO voltage.
+    0: "VDDSDIO 1.8V/3.3V strapping pin; an attached matrix can alter boot state",
+    # GPIO2 participates in RTC/boot strapping on the classic ESP32.
+    2: "RTC/boot strapping pin; an attached matrix can alter boot state",
+    # The DevKit documentation identifies GPIO5 as the USB D- strap/function.
+    5: "USB D- strapping pin; an attached matrix can alter boot state",
+    # LOW requests download mode; HIGH selects unsafe 1.8V flash on 3.3V WROOM.
+    12: "BOOT strapping pin; LOW at boot enters download mode, while HIGH selects 1.8V flash and a 3.3V WROOM board will not start",
+    # The classic ESP32 strapping table uses GPIO15 for VSPI/HSPI selection.
+    15: "VSPI/HSPI select strapping pin; an attached matrix can alter boot state",
 }
 UART_PIN_WARNINGS = {
     1: "UART0 TX for the USB-serial console/programming port; assignment can conflict with the serial console and future serial configuration transports",
@@ -94,12 +99,12 @@ ESP32_DEVKIT_V1_PROFILE = GPIOProfile(
 # https://nuttx.apache.org/docs/latest/platforms/risc-v/esp32c3/boards/esp32c3-supermini/index.html
 # Chip restrictions follow Espressif's ESP32-C3 GPIO documentation:
 # https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/peripherals/gpio.html
-# GPIO2/8/9 are straps, GPIO8 is also the usual board LED, GPIO9 is BOOT, and
-# GPIO20/21 are UART0.  Native USB uses non-header GPIO18/19 and must remain
-# available to the transport adapter.
+# GPIO2 is a strap; GPIO8 is a strap plus the board LED; GPIO9 is BOOT.
+# GPIO12-17 are flash, GPIO18/19 are native USB Serial/JTAG, GPIO20/21 are
+# UART0, and documented GPIO11 is a regular free header GPIO.
 ESP32_C3_SUPER_MINI_PROFILE = GPIOProfile(
     name="esp32c3",
-    available_pins=frozenset((*range(0, 11), 20, 21)),
+    available_pins=frozenset((0, 1, 3, 4, 5, 6, 7, 10, 11, 20, 21)),
     flash_reserved_pins=frozenset(range(12, 18)),
     input_only_pins=frozenset(),
     strapping_warnings={
@@ -111,7 +116,7 @@ ESP32_C3_SUPER_MINI_PROFILE = GPIOProfile(
         20: "UART0 RX; assignment can conflict with serial programming or diagnostics",
         21: "UART0 TX; assignment can conflict with serial programming or diagnostics",
     },
-    safe_recommended_pins=(0, 1, 3, 4, 5, 6, 7, 10),
+    safe_recommended_pins=(0, 1, 3, 4, 5, 6, 7, 10, 11),
     max_pin=21,
     board_label="ESP32-C3 Super Mini",
 )
@@ -170,6 +175,13 @@ def validate_gpio_pin(
             pin,
             resolved_role,
             f"GPIO {pin} is wired to the module SPI flash and is unavailable",
+        )
+    strapping_reason = capabilities.strapping_warnings.get(pin)
+    if strapping_reason is not None and pin not in capabilities.available_pins:
+        return GPIOValidation(
+            pin,
+            resolved_role,
+            f"GPIO {pin} is unavailable: {strapping_reason}",
         )
     if pin not in capabilities.available_pins:
         return GPIOValidation(

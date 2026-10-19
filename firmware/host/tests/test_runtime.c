@@ -111,8 +111,9 @@ static void b64(const uint8_t *input, size_t length, char *output)
     output[out] = '\0';
 }
 
-static void runtime_upload(kb_runtime_t *runtime, const char *json,
-                           size_t json_length, uint32_t crc, uint64_t now_ms)
+static void runtime_stage_upload(kb_runtime_t *runtime, const char *json,
+                                 size_t json_length, uint32_t crc,
+                                 uint64_t now_ms)
 {
     char line[KB_PROTOCOL_MAX_LINE_BYTES + 2U];
     size_t offset = 0U;
@@ -140,9 +141,20 @@ static void runtime_upload(kb_runtime_t *runtime, const char *json,
         offset += part;
         ++sequence;
     }
-    poll_ok(runtime, now_ms,
-            "{\"id\":\"commit\",\"cmd\":\"config_commit\",\"params\":{}}\n",
-            strlen("{\"id\":\"commit\",\"cmd\":\"config_commit\",\"params\":{}}\n"));
+}
+
+static void runtime_commit(kb_runtime_t *runtime, uint64_t now_ms)
+{
+    static const char command[] =
+        "{\"id\":\"commit\",\"cmd\":\"config_commit\",\"params\":{}}\n";
+    poll_ok(runtime, now_ms, command, sizeof(command) - 1U);
+}
+
+static void runtime_upload(kb_runtime_t *runtime, const char *json,
+                           size_t json_length, uint32_t crc, uint64_t now_ms)
+{
+    runtime_stage_upload(runtime, json, json_length, crc, now_ms);
+    runtime_commit(runtime, now_ms);
 }
 
 TEST(scanner_gate_blocks_every_gpio_operation)
@@ -246,6 +258,126 @@ TEST(corrupt_upload_is_rejected_without_state_change)
     ASSERT_TRUE(strstr((const char *)fake.console, "bad_crc") != NULL);
 }
 
+TEST(blank_runtime_provisions_valid_config_and_persists_it)
+{
+    fake_hal_t fake;
+    kb_hal_ops_t ops;
+    kb_boot_t boot;
+    kb_runtime_t runtime;
+    kb_config_t invalid = config_named("bad-matrix", 4U);
+    kb_config_t provisioned = config_named("provisioned", 5U);
+    kb_boot_t restarted_boot;
+    kb_runtime_t restarted_runtime;
+    kb_hal_probe_t descriptor = probe();
+    char invalid_json[KB_PROTOCOL_MAX_UPLOAD_BYTES];
+    char valid_json[KB_PROTOCOL_MAX_UPLOAD_BYTES];
+    char banner[FAKE_HAL_TRANSPORT_CAPACITY + 1U];
+    size_t invalid_length = 0U;
+    size_t valid_length = 0U;
+    static const char boot_status[] =
+        "{\"id\":\"boot\",\"cmd\":\"boot_status\",\"params\":{}}\n";
+    static const char config_get[] =
+        "{\"id\":\"get\",\"cmd\":\"config_get\",\"params\":{\"source\":\"active\"}}\n";
+    static const char config_status[] =
+        "{\"id\":\"status\",\"cmd\":\"config_status\",\"params\":{}}\n";
+
+    setup_no_config(&fake, &ops, &boot, &runtime);
+    ASSERT_EQ_U32(KB_BOOT_NO_CONFIG, boot.status.state);
+    ASSERT_EQ_U32(0U, fake.pin_write_call_count);
+    memcpy(banner, fake.console, fake.console_length);
+    banner[fake.console_length] = '\0';
+    ASSERT_TRUE(strstr(banner, "\"reason\":\"no_config\"") != NULL);
+
+    poll_ok(&runtime, 0U, boot_status, sizeof(boot_status) - 1U);
+    ASSERT_TRUE(strstr((const char *)fake.console, "\"ok\":true") != NULL);
+    ASSERT_TRUE(strstr((const char *)fake.console, "\"state\":0") != NULL);
+    ASSERT_EQ_U32(0U, fake.pin_write_call_count);
+
+    invalid.matrix.rows = 2U;
+    ASSERT_EQ_U32(KB_CONFIG_PARSE_OK, kb_config_finalize_crc32(&invalid));
+    ASSERT_EQ_U32(KB_CONFIG_PARSE_OK,
+                  kb_config_to_json(&invalid, invalid_json,
+                                    sizeof(invalid_json), &invalid_length));
+    runtime_upload(&runtime, invalid_json, invalid_length,
+                   kb_crc32(invalid_json, invalid_length), 1U);
+    ASSERT_TRUE(strstr((const char *)fake.console, "\"ok\":false") != NULL);
+    ASSERT_TRUE(strstr((const char *)fake.console, "bad_config") != NULL);
+    ASSERT_EQ_U32(KB_BOOT_NO_CONFIG, boot.status.state);
+    ASSERT_EQ_U32(0U, fake.pin_write_call_count);
+
+    ASSERT_EQ_U32(KB_CONFIG_PARSE_OK,
+                  kb_config_to_json(&provisioned, valid_json,
+                                    sizeof(valid_json), &valid_length));
+    runtime_stage_upload(&runtime, valid_json, valid_length,
+                         kb_crc32(valid_json, valid_length), 2U);
+    ASSERT_EQ_U32(KB_BOOT_NO_CONFIG, boot.status.state);
+    ASSERT_TRUE(!kb_runtime_scanner_started(&runtime));
+    ASSERT_EQ_U32(0U, fake.pin_write_call_count);
+    runtime_commit(&runtime, 2U);
+    ASSERT_EQ_U32(KB_BOOT_VALID, boot.status.state);
+    ASSERT_TRUE(kb_runtime_scanner_started(&runtime));
+    poll_ok(&runtime, 3U, NULL, 0U);
+    ASSERT_TRUE(fake.pin_write_call_count > 0U);
+
+    poll_ok(&runtime, 4U, config_get, sizeof(config_get) - 1U);
+    ASSERT_TRUE(strstr((const char *)fake.console,
+                       "\"project_name\":\"provisioned\"") != NULL);
+    poll_ok(&runtime, 5U, config_status, sizeof(config_status) - 1U);
+    ASSERT_TRUE(strstr((const char *)fake.console, "\"ok\":true") != NULL);
+    ASSERT_TRUE(strstr((const char *)fake.console, "\"state\":2") != NULL);
+
+    ASSERT_EQ_U32(KB_BOOT_OK,
+                  kb_boot_start(&restarted_boot, &descriptor, &ops));
+    ASSERT_EQ_U32(KB_BOOT_VALID, restarted_boot.status.state);
+    ASSERT_STREQ("provisioned",
+                 kb_boot_active_config(&restarted_boot)->meta.project_name);
+    ASSERT_EQ_U32(KB_RUNTIME_OK,
+                  kb_runtime_init(&restarted_runtime, &restarted_boot, &ops,
+                                  1U));
+    poll_ok(&restarted_runtime, 6U, config_get, sizeof(config_get) - 1U);
+    ASSERT_TRUE(strstr((const char *)fake.console,
+                       "\"project_name\":\"provisioned\"") != NULL);
+}
+
+TEST(blank_runtime_recovers_after_partial_upload_timeout)
+{
+    fake_hal_t fake;
+    kb_hal_ops_t ops;
+    kb_boot_t boot;
+    kb_runtime_t runtime;
+    kb_config_t replacement = config_named("after-timeout", 4U);
+    char json[KB_PROTOCOL_MAX_UPLOAD_BYTES];
+    size_t json_length = 0U;
+    static const char partial[] =
+        "{\"id\":\"partial\",\"cmd\":\"config_upload\",\"params\":{"
+        "\"phase\":\"start\"";
+
+    setup_no_config(&fake, &ops, &boot, &runtime);
+    poll_ok(&runtime, 10U, partial, sizeof(partial) - 1U);
+    ASSERT_EQ_U32(KB_BOOT_NO_CONFIG, boot.status.state);
+    ASSERT_EQ_U32(0U, fake.pin_write_call_count);
+    poll_ok(&runtime, 10U + KB_RUNTIME_CONSOLE_TIMEOUT_MS, NULL, 0U);
+    ASSERT_TRUE(strstr((const char *)fake.console, "invalid_command") != NULL);
+    ASSERT_EQ_U32(0U, runtime.reader.length);
+    ASSERT_EQ_U32(0U, fake.pin_write_call_count);
+
+    ASSERT_EQ_U32(KB_CONFIG_PARSE_OK,
+                  kb_config_to_json(&replacement, json, sizeof(json),
+                                    &json_length));
+    runtime_stage_upload(&runtime, json, json_length,
+                         kb_crc32(json, json_length),
+                         11U + KB_RUNTIME_CONSOLE_TIMEOUT_MS);
+    ASSERT_EQ_U32(KB_BOOT_NO_CONFIG, boot.status.state);
+    ASSERT_EQ_U32(0U, fake.pin_write_call_count);
+    runtime_commit(&runtime, 11U + KB_RUNTIME_CONSOLE_TIMEOUT_MS);
+    ASSERT_EQ_U32(KB_BOOT_VALID, boot.status.state);
+    ASSERT_STREQ("after-timeout",
+                 kb_boot_active_config(&boot)->meta.project_name);
+    ASSERT_TRUE(kb_runtime_scanner_started(&runtime));
+    poll_ok(&runtime, 12U + KB_RUNTIME_CONSOLE_TIMEOUT_MS, NULL, 0U);
+    ASSERT_TRUE(fake.pin_write_call_count > 0U);
+}
+
 TEST(malformed_frame_emits_error_and_does_not_corrupt_state)
 {
     fake_hal_t fake;
@@ -318,6 +450,8 @@ static const test_case_t cases[] = {
     TEST_CASE(two_simultaneous_keys_preserve_multi_key_hid_state),
     TEST_CASE(valid_console_upload_commits_and_reloads_runtime_config),
     TEST_CASE(corrupt_upload_is_rejected_without_state_change),
+    TEST_CASE(blank_runtime_provisions_valid_config_and_persists_it),
+    TEST_CASE(blank_runtime_recovers_after_partial_upload_timeout),
     TEST_CASE(malformed_frame_emits_error_and_does_not_corrupt_state),
     TEST_CASE(release_only_event_emits_an_all_released_report),
     TEST_CASE(queue_overflow_and_partial_frame_timeout_are_bounded)

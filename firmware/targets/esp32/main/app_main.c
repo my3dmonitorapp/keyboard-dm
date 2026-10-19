@@ -63,8 +63,6 @@ void app_main(void)
              (int)runtime_boot.status.state, (int)result);
     if (kbdm_idf_ble_start(runtime_hal) != KB_HAL_OK)
         ESP_LOGW(tag, "BLE HID disabled or unavailable");
-    if (result != KB_BOOT_OK || runtime_boot.status.state != KB_BOOT_VALID)
-        return;
     runtime_operations.hal_ble_send_report = runtime_hid_report;
     runtime = malloc(sizeof(*runtime));
     if (runtime == NULL) {

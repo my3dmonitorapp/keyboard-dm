@@ -7,8 +7,8 @@ and SHA-256 digests.
 Design rules:
   * Manifests are immutable once loaded (frozen dataclasses, tuples).
   * Validation is strict; failures raise :class:`ManifestValidationError`.
-  * Reference artifacts are the verified F2.1 builds (compile-verified only,
-    never labelled hardware-tested).
+  * Reference artifacts are compile-verified only, never labelled
+    hardware-tested.
   * No I/O here: hash checking of actual files lives in the installer.
 """
 
@@ -185,7 +185,7 @@ def load_manifest(path: str | Path) -> FirmwareManifest:
     return manifest_from_dict(data)
 
 
-def _ref(name: str, version: str, family: str, size: str,
+def _ref(name: str, version: str, family: str, size: str, mode: str, freq: str,
          images: tuple[Mapping[str, Any], ...]) -> dict[str, Any]:
     return {
         "schema": "keyboard-dm/firmware-manifest/1",
@@ -193,40 +193,42 @@ def _ref(name: str, version: str, family: str, size: str,
         "version": version,
         "chip_family": family,
         "flash_size": size,
-        "flash_mode": "dio",
-        "flash_freq": "80m",
+        "flash_mode": mode,
+        "flash_freq": freq,
         "images": [dict(img) for img in images],
     }
 
 
-#: Verified F2.1 reference artifacts. Compile-verified in the CI environment
-#: only; NOT hardware-tested. Kept in-repo (no device data).
+#: Reference artifacts from a clean CI rebuild on 2026-10-18 using ESP-IDF
+#: v5.1.6 and firmware source at commit 103daa9. Compile-verified only; NOT
+#: hardware-tested and NOT bit-exact reproducible against the original F2.1
+#: build because of build-configuration drift. Kept in-repo (no device data).
 KNOWN_REFERENCE_ARTIFACTS: tuple[FirmwareManifest, ...] = (
     manifest_from_dict(_ref(
-        "kbdm-esp32", "f2.1.0", "esp32", "4MB",
+        "kbdm-esp32", "f3.0.0", "esp32", "4MB", "dio", "40m",
         (
-            {"file_name": "bootloader.bin", "offset": 0x0, "sha256":
-             "317a076c09840d501477177f31de2c572fb0e698f7762e44a378e696a03d17de",
-             "size_bytes": 20368},
+            {"file_name": "bootloader.bin", "offset": 0x1000, "sha256":
+             "2e48bc2952504312963c0bd193093cdffd6197f7d0182413be3e297226aa02b1",
+             "size_bytes": 26784},
             {"file_name": "partition-table.bin", "offset": 0x8000, "sha256":
              "a11982a2601a607baadac94c0f21fdb7fdbf910249ed5ba58af40be62c2ee98a",
              "size_bytes": 3072},
             {"file_name": "kbdm_esp32.bin", "offset": 0x10000, "sha256":
-             "5a76b522e9566a8b07019ba0e4cc3f7ffe7980f0c28c92e9b914dae581766a4d",
+             "642562e849b515df0442c77299ace34161350fbbac90e93886e96592c44c38fa",
              "size_bytes": 786464},
         ),
     )),
     manifest_from_dict(_ref(
-        "kbdm-esp32c3", "f2.1.0", "esp32c3", "4MB",
+        "kbdm-esp32c3", "f3.0.0", "esp32c3", "4MB", "dio", "80m",
         (
             {"file_name": "bootloader.bin", "offset": 0x0, "sha256":
-             "317a076c09840d501477177f31de2c572fb0e698f7762e44a378e696a03d17de",
+             "05c45f65064c5739ed3e53c544469a745b9c9290dcdbc97ae3f888b87b728fd6",
              "size_bytes": 20368},
             {"file_name": "partition-table.bin", "offset": 0x8000, "sha256":
              "a11982a2601a607baadac94c0f21fdb7fdbf910249ed5ba58af40be62c2ee98a",
              "size_bytes": 3072},
             {"file_name": "kbdm_esp32c3.bin", "offset": 0x10000, "sha256":
-             "521b73ce60e2ce6d4da0b88a98a35d0877cb2d2d46c18f5a544dccb603d44f4f",
+             "8074587a345214aaca9399c8798f0b83000c54428cd7eb18601093d324c74fc7",
              "size_bytes": 851760},
         ),
     )),

@@ -13,24 +13,28 @@ from typing import Iterable, Sequence
 
 GPIO_MIN = 0
 GPIO_MAX = 39
-WROOM_USABLE_MAX = 37
+WROOM_AVAILABLE_PINS = frozenset({
+    0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25,
+    26, 27, 32, 33, 34, 35, 36, 39,
+})
 
-FLASH_RESERVED_PINS = frozenset({6, 7, 8, 12, 15})
-INPUT_ONLY_PINS = frozenset({35, 36, 37, 38, 39})
+FLASH_RESERVED_PINS = frozenset({6, 7, 8, 9, 10, 11})
+INPUT_ONLY_PINS = frozenset({34, 35, 36, 39})
 STRAPPING_PIN_WARNINGS = {
-    0: "BOOT/chip-select strapping; the external circuit can affect boot state",
-    2: "general strapping/LED default; the external circuit can affect boot state",
-    3: "UART0 RXD strapping; assignment may interfere with the UART function or boot state",
-    9: "VDD_SPI voltage strapping; the external circuit can affect flash voltage configuration",
+    0: "flash/boot-mode select strapping; LOW at boot holds the board in the bootloader and affects boot state",
+    2: "boot-mode helper strapping and on-board blue LED; the external circuit can affect boot state",
+    5: "VDD_SPI strapping; this pin outputs PWM at boot",
+    12: "VDD_SPI strapping; HIGH at boot selects 1.8V flash and the board will not start",
+    15: "VDD_SPI strapping; LOW at boot silences the boot log, and this pin outputs PWM at boot",
+}
+UART_PIN_WARNINGS = {
+    1: "UART0 TX for the USB-serial console/programming port; assignment can conflict with the serial console and future serial configuration transports",
+    3: "UART0 RX for the USB-serial console/programming port; assignment can conflict with the serial console and future serial configuration transports",
 }
 
 # Conservative automatic choices.  Manual entry remains available for other
 # pins that pass the authoritative validation below.
-SAFE_RECOMMENDED_PINS = tuple(
-    pin
-    for pin in range(4, 22)
-    if pin not in FLASH_RESERVED_PINS and pin not in STRAPPING_PIN_WARNINGS
-)
+SAFE_RECOMMENDED_PINS = (4, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33)
 
 
 class PinRole(str, Enum):
@@ -59,6 +63,46 @@ class GPIOValidation:
         return self.valid
 
 
+@dataclass(frozen=True)
+class GPIOProfile:
+    """Pin capabilities and warnings for one chip/board combination."""
+
+    name: str
+    available_pins: frozenset[int]
+    flash_reserved_pins: frozenset[int]
+    input_only_pins: frozenset[int]
+    strapping_warnings: dict[int, str]
+    uart_warnings: dict[int, str]
+    safe_recommended_pins: tuple[int, ...]
+
+
+ESP32_DEVKIT_V1_PROFILE = GPIOProfile(
+    name="esp32",
+    available_pins=WROOM_AVAILABLE_PINS,
+    flash_reserved_pins=FLASH_RESERVED_PINS,
+    input_only_pins=INPUT_ONLY_PINS,
+    strapping_warnings=STRAPPING_PIN_WARNINGS,
+    uart_warnings=UART_PIN_WARNINGS,
+    safe_recommended_pins=SAFE_RECOMMENDED_PINS,
+)
+
+_PROFILES: dict[str, GPIOProfile | None] = {
+    "esp32": ESP32_DEVKIT_V1_PROFILE,
+    "esp32c3": None,
+}
+
+
+def _resolve_profile(profile: str | GPIOProfile) -> GPIOProfile:
+    if isinstance(profile, GPIOProfile):
+        return profile
+    if profile not in _PROFILES:
+        raise ValueError(f"Unknown GPIO capability profile {profile!r}")
+    resolved = _PROFILES[profile]
+    if resolved is None:
+        raise ValueError(f"GPIO capability profile {profile!r} is not yet defined")
+    return resolved
+
+
 def _coerce_role(role: PinRole | str) -> PinRole:
     try:
         return PinRole(role)
@@ -66,9 +110,15 @@ def _coerce_role(role: PinRole | str) -> PinRole:
         raise ValueError(f"Unsupported GPIO role {role!r}") from error
 
 
-def validate_gpio_pin(pin: object, role: PinRole | str) -> GPIOValidation:
+def validate_gpio_pin(
+    pin: object,
+    role: PinRole | str,
+    *,
+    profile: str | GPIOProfile = "esp32",
+) -> GPIOValidation:
     """Validate one assignment against ESP32-WROOM-32 and scan-role rules."""
     resolved_role = _coerce_role(role)
+    capabilities = _resolve_profile(profile)
     if pin is None:
         return GPIOValidation(pin, resolved_role, "GPIO assignment is required")
     if type(pin) is not int:
@@ -79,26 +129,29 @@ def validate_gpio_pin(pin: object, role: PinRole | str) -> GPIOValidation:
             resolved_role,
             f"GPIO {pin} is outside the ESP32 range {GPIO_MIN}..{GPIO_MAX}",
         )
-    if pin in FLASH_RESERVED_PINS:
+    if pin in capabilities.flash_reserved_pins:
         return GPIOValidation(
             pin,
             resolved_role,
-            f"GPIO {pin} is reserved for SPI flash",
+            f"GPIO {pin} is wired to the module SPI flash and is unavailable",
         )
-    if resolved_role is PinRole.OUTPUT and pin in INPUT_ONLY_PINS:
+    if pin not in capabilities.available_pins:
+        return GPIOValidation(
+            pin,
+            resolved_role,
+            f"GPIO {pin} is not available on the ESP32-WROOM-32 / 30-pin DevKit V1",
+        )
+    if resolved_role is PinRole.OUTPUT and pin in capabilities.input_only_pins:
         return GPIOValidation(
             pin,
             resolved_role,
             f"GPIO {pin} is input-only and cannot drive a matrix row",
         )
-    if pin > WROOM_USABLE_MAX:
-        return GPIOValidation(
-            pin,
-            resolved_role,
-            f"GPIO {pin} is not usable on ESP32-WROOM-32 (maximum {WROOM_USABLE_MAX})",
-        )
-
-    warning = STRAPPING_PIN_WARNINGS.get(pin)
+    warning = capabilities.strapping_warnings.get(pin)
+    if warning is None:
+        warning = capabilities.uart_warnings.get(pin)
+    if warning is None and pin in capabilities.input_only_pins:
+        warning = "input-only; no internal pull-up or pull-down is available, so an external resistor is required"
     if warning is not None:
         warning = f"GPIO {pin}: {warning}"
     return GPIOValidation(pin, resolved_role, warning=warning)
@@ -109,13 +162,15 @@ def suggest_safe_pins(
     used_pins: Iterable[int] = (),
     *,
     min_pin: int = GPIO_MIN,
-    max_pin: int = WROOM_USABLE_MAX,
+    max_pin: int = GPIO_MAX,
+    profile: str | GPIOProfile = "esp32",
 ) -> list[int]:
     """Return unused conservative pins that pass validation for each role.
 
     ``roles`` may be a role sequence or a count (which requests output-role
     pins).  Fewer pins are returned when the conservative pool is exhausted.
     """
+    capabilities = _resolve_profile(profile)
     requested_roles: Sequence[PinRole | str]
     if type(roles) is int:
         if roles < 0:
@@ -131,10 +186,10 @@ def suggest_safe_pins(
         match = next(
             (
                 pin
-                for pin in SAFE_RECOMMENDED_PINS
+                for pin in capabilities.safe_recommended_pins
                 if min_pin <= pin <= max_pin
                 and pin not in used
-                and validate_gpio_pin(pin, resolved_role).valid
+                and validate_gpio_pin(pin, resolved_role, profile=capabilities).valid
             ),
             None,
         )

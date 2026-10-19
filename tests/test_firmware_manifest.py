@@ -142,20 +142,51 @@ def test_load_manifest_roundtrip(tmp_path) -> None:
     assert [img.file_name for img in manifest.images] == ["bootloader.bin", "app.bin"]
 
 
-def test_reference_artifacts_load_and_match_f21() -> None:
+def test_reference_artifacts_load_and_match_f30() -> None:
     by_name = {m.name: m for m in KNOWN_REFERENCE_ARTIFACTS}
     c3 = by_name["kbdm-esp32c3"]
     assert c3.chip_family == ChipFamily.ESP32_C3
+    assert c3.version == "f3.0.0"
     assert c3.flash_size == "4MB"
+    assert c3.flash_mode == "dio"
+    assert c3.flash_freq == "80m"
+    assert c3.image("bootloader.bin").offset == 0x0
+    assert c3.image("bootloader.bin").size_bytes == 20368
+    assert c3.image("bootloader.bin").sha256 == (
+        "05c45f65064c5739ed3e53c544469a745b9c9290dcdbc97ae3f888b87b728fd6"
+    )
+    assert c3.image("partition-table.bin").offset == 0x8000
+    assert c3.image("partition-table.bin").size_bytes == 3072
+    assert c3.image("partition-table.bin").sha256 == (
+        "a11982a2601a607baadac94c0f21fdb7fdbf910249ed5ba58af40be62c2ee98a"
+    )
+    assert c3.image("kbdm_esp32c3.bin").offset == 0x10000
+    assert c3.image("kbdm_esp32c3.bin").size_bytes == 851760
     assert c3.image("kbdm_esp32c3.bin").sha256 == (
-        "521b73ce60e2ce6d4da0b88a98a35d0877cb2d2d46c18f5a544dccb603d44f4f"
+        "8074587a345214aaca9399c8798f0b83000c54428cd7eb18601093d324c74fc7"
     )
     assert lookup_reference("kbdm-esp32c3") is c3
     assert lookup_reference("nope") is None
     esp32 = by_name["kbdm-esp32"]
     assert esp32.chip_family == ChipFamily.ESP32
+    assert esp32.version == "f3.0.0"
+    assert esp32.flash_size == "4MB"
+    assert esp32.flash_mode == "dio"
+    assert esp32.flash_freq == "40m"
+    assert esp32.image("bootloader.bin").offset == 0x1000
+    assert esp32.image("bootloader.bin").size_bytes == 26784
+    assert esp32.image("bootloader.bin").sha256 == (
+        "2e48bc2952504312963c0bd193093cdffd6197f7d0182413be3e297226aa02b1"
+    )
+    assert esp32.image("partition-table.bin").offset == 0x8000
+    assert esp32.image("partition-table.bin").size_bytes == 3072
+    assert esp32.image("partition-table.bin").sha256 == (
+        "a11982a2601a607baadac94c0f21fdb7fdbf910249ed5ba58af40be62c2ee98a"
+    )
+    assert esp32.image("kbdm_esp32.bin").offset == 0x10000
+    assert esp32.image("kbdm_esp32.bin").size_bytes == 786464
     assert esp32.image("kbdm_esp32.bin").sha256 == (
-        "5a76b522e9566a8b07019ba0e4cc3f7ffe7980f0c28c92e9b914dae581766a4d"
+        "642562e849b515df0442c77299ace34161350fbbac90e93886e96592c44c38fa"
     )
 
 

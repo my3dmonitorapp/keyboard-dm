@@ -103,6 +103,29 @@ TEST(incremental_reader_rejects_invalid_utf8)
     ASSERT_EQ_U32(KB_PROTOCOL_PARSE_BAD_UTF8, error); ASSERT_EQ_U32(sizeof(bytes), consumed);
 }
 
+TEST(incremental_reader_rejects_overlong_frame_and_recovers)
+{
+    static const uint8_t valid[] =
+        "{\"version\":1,\"id\":\"v\",\"cmd\":\"version\",\"params\":{}}\n";
+    kb_protocol_reader_t reader;
+    kb_protocol_request_t request;
+    kb_protocol_parse_error_t error;
+    uint8_t bytes[KB_PROTOCOL_MAX_LINE_BYTES + 2U];
+    size_t consumed;
+    memset(bytes, 'x', sizeof(bytes));
+    bytes[sizeof(bytes) - 1U] = '\n';
+    kb_protocol_reader_init(&reader);
+    ASSERT_EQ_U32(KB_PROTOCOL_READ_ERROR,
+                  kb_protocol_read_one_cmd(&reader, bytes, sizeof(bytes),
+                                           &consumed, &request, &error));
+    ASSERT_EQ_U32(KB_PROTOCOL_PARSE_OVERLONG, error);
+    ASSERT_EQ_U32(sizeof(bytes), consumed);
+    ASSERT_EQ_U32(KB_PROTOCOL_READ_COMMAND,
+                  kb_protocol_read_one_cmd(
+                      &reader, valid, sizeof(valid) - 1U, &consumed, &request,
+                      &error));
+}
+
 TEST(three_chunk_bad_crc_then_good_commit_and_get)
 {
     fake_hal_t fake; kb_hal_ops_t ops; kb_boot_t boot; kb_protocol_context_t protocol;
@@ -140,6 +163,7 @@ TEST(factory_reset_erases_config_slots)
 static const test_case_t cases[] = {
     TEST_CASE(version_and_key_events), TEST_CASE(bad_version_and_unknown_field_are_structured_errors),
     TEST_CASE(incremental_reader_rejects_invalid_utf8), TEST_CASE(three_chunk_bad_crc_then_good_commit_and_get),
+    TEST_CASE(incremental_reader_rejects_overlong_frame_and_recovers),
     TEST_CASE(out_of_order_chunk_does_not_mutate_config), TEST_CASE(factory_reset_erases_config_slots)
 };
 TEST_MAIN("protocol", cases)

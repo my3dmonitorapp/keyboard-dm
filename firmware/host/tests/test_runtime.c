@@ -164,9 +164,34 @@ TEST(scanner_gate_blocks_every_gpio_operation)
     kb_boot_t boot;
     kb_runtime_t runtime;
     setup_no_config(&fake, &ops, &boot, &runtime);
+    ASSERT_EQ_U32(KB_BOOT_NO_CONFIG, boot.status.state);
     poll_ok(&runtime, 100U, NULL, 0U);
     ASSERT_TRUE(!kb_runtime_scanner_started(&runtime));
     ASSERT_EQ_U32(0U, kb_events_count(&runtime.events));
+    ASSERT_EQ_U32(0U, fake.pin_direction_call_count);
+    ASSERT_EQ_U32(0U, fake.pin_pulldown_call_count);
+    ASSERT_EQ_U32(0U, fake.pin_write_call_count);
+    ASSERT_EQ_U32(0U, fake.pin_read_call_count);
+}
+
+TEST(safe_mode_first_poll_never_configures_or_activates_gpio)
+{
+    fake_hal_t fake;
+    kb_hal_ops_t ops;
+    kb_hal_probe_t descriptor = probe();
+    kb_boot_t boot;
+    kb_runtime_t runtime;
+    fake_hal_reset(&fake);
+    ops = fake_hal_ops(&fake);
+    memcpy(fake.stores[KB_HAL_STORE_CONFIG_A], "corrupt-a", 9U);
+    fake.store_lengths[KB_HAL_STORE_CONFIG_A] = 9U;
+    memcpy(fake.stores[KB_HAL_STORE_CONFIG_B], "corrupt-b", 9U);
+    fake.store_lengths[KB_HAL_STORE_CONFIG_B] = 9U;
+    ASSERT_EQ_U32(KB_BOOT_OK, kb_boot_start(&boot, &descriptor, &ops));
+    ASSERT_EQ_U32(KB_BOOT_SAFE_MODE, boot.status.state);
+    ASSERT_EQ_U32(KB_RUNTIME_OK, kb_runtime_init(&runtime, &boot, &ops, 1U));
+    poll_ok(&runtime, 0U, NULL, 0U);
+    ASSERT_TRUE(!kb_runtime_scanner_started(&runtime));
     ASSERT_EQ_U32(0U, fake.pin_direction_call_count);
     ASSERT_EQ_U32(0U, fake.pin_pulldown_call_count);
     ASSERT_EQ_U32(0U, fake.pin_write_call_count);
@@ -446,6 +471,7 @@ TEST(queue_overflow_and_partial_frame_timeout_are_bounded)
 
 static const test_case_t cases[] = {
     TEST_CASE(scanner_gate_blocks_every_gpio_operation),
+    TEST_CASE(safe_mode_first_poll_never_configures_or_activates_gpio),
     TEST_CASE(full_press_release_cycle_emits_reports_in_order),
     TEST_CASE(two_simultaneous_keys_preserve_multi_key_hid_state),
     TEST_CASE(valid_console_upload_commits_and_reloads_runtime_config),

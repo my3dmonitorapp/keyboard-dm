@@ -396,6 +396,163 @@ void kb_config_init(kb_config_t *config)
     config->meta.matrix_schema_version = 1U;
 }
 
+static kb_config_build_result_t builder_copy(char *target, size_t capacity,
+                                             const char *source)
+{
+    size_t length;
+    if (source == NULL) {
+        return KB_CONFIG_BUILD_INVALID_ARGUMENT;
+    }
+    length = strlen(source);
+    if (length >= capacity) {
+        return KB_CONFIG_BUILD_BUFFER_TOO_SMALL;
+    }
+    memcpy(target, source, length + 1U);
+    return KB_CONFIG_BUILD_OK;
+}
+
+kb_config_build_result_t kb_config_builder_init(kb_config_builder_t *builder,
+                                                const char *chip_class,
+                                                uint8_t rows, uint8_t cols)
+{
+    kb_config_build_result_t result;
+    if (builder == NULL || chip_class == NULL) {
+        return KB_CONFIG_BUILD_INVALID_ARGUMENT;
+    }
+    if (rows == 0U || rows > KB_CONFIG_MAX_ROWS || cols == 0U ||
+        cols > KB_CONFIG_MAX_COLS) {
+        return KB_CONFIG_BUILD_VALUE_RANGE;
+    }
+    kb_config_init(&builder->config);
+    result = builder_copy(builder->config.chip_class,
+                          sizeof(builder->config.chip_class), chip_class);
+    if (result != KB_CONFIG_BUILD_OK) {
+        memset(builder, 0, sizeof(*builder));
+        return result;
+    }
+    builder->config.matrix.rows = rows;
+    builder->config.matrix.cols = cols;
+    return KB_CONFIG_BUILD_OK;
+}
+
+kb_config_build_result_t kb_config_builder_set_pinmap(
+    kb_config_builder_t *builder, const uint8_t *row_pins,
+    size_t row_pin_count, const uint8_t *col_pins, size_t col_pin_count,
+    kb_scan_mode_t scan_mode, kb_pull_up_source_t pull_up_source)
+{
+    if (builder == NULL || row_pins == NULL || col_pins == NULL) {
+        return KB_CONFIG_BUILD_INVALID_ARGUMENT;
+    }
+    if (row_pin_count != builder->config.matrix.rows ||
+        col_pin_count != builder->config.matrix.cols ||
+        row_pin_count > KB_CONFIG_MAX_ROWS || col_pin_count > KB_CONFIG_MAX_COLS ||
+        scan_mode > KB_SCAN_DRIVE_COLS_LOW_READ_ROWS_PULLUP ||
+        pull_up_source > KB_PULL_UP_EXTERNAL) {
+        return KB_CONFIG_BUILD_VALUE_RANGE;
+    }
+    memcpy(builder->config.pinmap.row_pins, row_pins, row_pin_count);
+    memcpy(builder->config.pinmap.col_pins, col_pins, col_pin_count);
+    builder->config.pinmap.row_pin_count = (uint8_t)row_pin_count;
+    builder->config.pinmap.col_pin_count = (uint8_t)col_pin_count;
+    builder->config.pinmap.scan_mode = scan_mode;
+    builder->config.pinmap.pull_up_source = pull_up_source;
+    return KB_CONFIG_BUILD_OK;
+}
+
+kb_config_build_result_t kb_config_builder_set_electrical(
+    kb_config_builder_t *builder, uint16_t debounce_ms,
+    kb_diode_scope_t diode_scope,
+    kb_diode_direction_t board_diode_direction)
+{
+    if (builder == NULL) {
+        return KB_CONFIG_BUILD_INVALID_ARGUMENT;
+    }
+    if (debounce_ms < KB_CONFIG_MIN_DEBOUNCE_MS ||
+        debounce_ms > KB_CONFIG_MAX_DEBOUNCE_MS ||
+        diode_scope > KB_DIODE_SCOPE_PER_SWITCH ||
+        board_diode_direction > KB_DIODE_ROW_TO_COL) {
+        return KB_CONFIG_BUILD_VALUE_RANGE;
+    }
+    builder->config.debounce_ms = debounce_ms;
+    builder->config.diode_scope = diode_scope;
+    builder->config.board_diode_direction = board_diode_direction;
+    return KB_CONFIG_BUILD_OK;
+}
+
+kb_config_build_result_t kb_config_builder_set_meta(
+    kb_config_builder_t *builder, const char *project_name,
+    uint16_t project_version, uint16_t profile_version,
+    uint16_t matrix_schema_version, const char *updated)
+{
+    kb_config_meta_t candidate;
+    kb_config_build_result_t result;
+    if (builder == NULL) {
+        return KB_CONFIG_BUILD_INVALID_ARGUMENT;
+    }
+    candidate = builder->config.meta;
+    result = builder_copy(candidate.project_name, sizeof(candidate.project_name),
+                          project_name);
+    if (result != KB_CONFIG_BUILD_OK) {
+        return result;
+    }
+    result = builder_copy(candidate.updated, sizeof(candidate.updated), updated);
+    if (result != KB_CONFIG_BUILD_OK) {
+        return result;
+    }
+    candidate.project_version = project_version;
+    candidate.profile_version = profile_version;
+    candidate.matrix_schema_version = matrix_schema_version;
+    builder->config.meta = candidate;
+    return KB_CONFIG_BUILD_OK;
+}
+
+kb_config_build_result_t kb_config_builder_add_switch(
+    kb_config_builder_t *builder, uint8_t row, uint8_t col,
+    kb_diode_direction_t diode_direction, const kb_action_t *action)
+{
+    kb_switch_config_t *item;
+    size_t index;
+    if (builder == NULL || action == NULL) {
+        return KB_CONFIG_BUILD_INVALID_ARGUMENT;
+    }
+    if (row >= builder->config.matrix.rows || col >= builder->config.matrix.cols ||
+        diode_direction > KB_DIODE_ROW_TO_COL) {
+        return KB_CONFIG_BUILD_VALUE_RANGE;
+    }
+    if (builder->config.switch_count >= KB_CONFIG_MAX_KEYS) {
+        return KB_CONFIG_BUILD_TOO_MANY_SWITCHES;
+    }
+    for (index = 0U; index < builder->config.switch_count; ++index) {
+        if (builder->config.switches[index].row == row &&
+            builder->config.switches[index].col == col) {
+            return KB_CONFIG_BUILD_VALUE_RANGE;
+        }
+    }
+    item = &builder->config.switches[builder->config.switch_count++];
+    item->row = row;
+    item->col = col;
+    item->diode_direction = diode_direction;
+    item->action = *action;
+    return KB_CONFIG_BUILD_OK;
+}
+
+kb_config_build_result_t kb_config_builder_finish(kb_config_builder_t *builder,
+                                                  uint32_t generation,
+                                                  kb_config_t *output)
+{
+    kb_config_t candidate;
+    if (builder == NULL || output == NULL) {
+        return KB_CONFIG_BUILD_INVALID_ARGUMENT;
+    }
+    candidate = builder->config;
+    candidate.generation = generation;
+    if (kb_config_finalize_crc32(&candidate) != KB_CONFIG_PARSE_OK) {
+        return KB_CONFIG_BUILD_BUFFER_TOO_SMALL;
+    }
+    *output = candidate;
+    return KB_CONFIG_BUILD_OK;
+}
+
 void kb_config_errors_reset(kb_config_error_list_t *errors)
 {
     if (errors != NULL) {

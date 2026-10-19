@@ -95,6 +95,31 @@ TEST(valid_all_actions_fixture)
     free(json);
 }
 
+TEST(valid_golden_3x3_fixture_round_trips_exactly)
+{
+    const char *path = "tests/protocol/valid/golden_3x3.json";
+    kb_config_t config;
+    char canonical[2048];
+    char *json;
+    size_t length;
+    size_t canonical_length;
+    json = load_file(path, &length);
+    ASSERT_TRUE(json != NULL);
+    while (length != 0U && (json[length - 1U] == '\n' ||
+                            json[length - 1U] == '\r')) {
+        --length;
+    }
+    ASSERT_EQ_U32(KB_CONFIG_PARSE_OK,
+                  kb_config_from_json(json, length, &config));
+    ASSERT_EQ_U32(9U, config.switch_count);
+    ASSERT_EQ_U32(KB_CONFIG_PARSE_OK,
+                  kb_config_to_json(&config, canonical, sizeof(canonical),
+                                    &canonical_length));
+    ASSERT_EQ_U32(length, canonical_length);
+    ASSERT_TRUE(memcmp(json, canonical, length) == 0);
+    free(json);
+}
+
 static void assert_bad_fixture(const char *path, kb_config_parse_code_t expected)
 {
     char *json;
@@ -127,6 +152,7 @@ TEST(malformed_fixtures_do_not_touch_output)
 static const test_case_t cases[] = {
     TEST_CASE(valid_minimal_fixture),
     TEST_CASE(valid_all_actions_fixture),
+    TEST_CASE(valid_golden_3x3_fixture_round_trips_exactly),
     TEST_CASE(malformed_fixtures_do_not_touch_output)
 };
 

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication
 
 from desktop_app.app import MatrixPinmapDialog
 from desktop_app.esp32_gpio import (
+    ESP32_C3_SUPER_MINI_PROFILE,
     FLASH_RESERVED_PINS,
     INPUT_ONLY_PINS,
     SAFE_RECOMMENDED_PINS,
@@ -98,9 +99,29 @@ def test_gpio39_is_allowed_for_an_input_role() -> None:
     assert validate_gpio_pin(39, PinRole.INPUT).valid
 
 
-def test_esp32c3_profile_is_explicitly_undefined() -> None:
-    with pytest.raises(ValueError, match="not yet defined"):
-        validate_gpio_pin(4, PinRole.OUTPUT, profile="esp32c3")
+def test_esp32c3_super_mini_profile_is_capability_only_and_usable() -> None:
+    assert ESP32_C3_SUPER_MINI_PROFILE.available_pins == frozenset(
+        (*range(0, 11), 20, 21)
+    )
+    assert validate_gpio_pin(4, PinRole.OUTPUT, profile="esp32c3").valid
+    assert "SPI flash" in validate_gpio_pin(
+        12, PinRole.INPUT, profile="esp32c3"
+    ).error
+    assert not validate_gpio_pin(11, PinRole.INPUT, profile="esp32c3").valid
+    assert not validate_gpio_pin(18, PinRole.INPUT, profile="esp32c3").valid
+
+
+@pytest.mark.parametrize("pin", [2, 8, 9])
+def test_esp32c3_strapping_pins_warn(pin: int) -> None:
+    result = validate_gpio_pin(pin, PinRole.OUTPUT, profile="esp32c3")
+    assert result.valid
+    assert "strapping" in result.warning
+
+
+def test_esp32c3_suggestions_avoid_straps_uart_usb_and_invented_wiring() -> None:
+    suggestions = suggest_safe_pins(8, profile="esp32c3")
+    assert suggestions == [0, 1, 3, 4, 5, 6, 7, 10]
+    assert set(suggestions).isdisjoint({2, 8, 9, 18, 19, 20, 21})
 
 
 def test_suggestions_are_always_safe_valid_and_unused() -> None:

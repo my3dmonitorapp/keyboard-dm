@@ -1,4 +1,4 @@
-"""ESP32-WROOM-32 GPIO safety rules for keyboard matrix scanning.
+"""ESP32-family GPIO safety rules for keyboard matrix scanning.
 
 This module deliberately has no Qt dependency so the electrical policy can be
 tested and reused independently of the desktop UI.
@@ -74,6 +74,9 @@ class GPIOProfile:
     strapping_warnings: dict[int, str]
     uart_warnings: dict[int, str]
     safe_recommended_pins: tuple[int, ...]
+    min_pin: int = GPIO_MIN
+    max_pin: int = GPIO_MAX
+    board_label: str = "ESP32-WROOM-32 / 30-pin DevKit V1"
 
 
 ESP32_DEVKIT_V1_PROFILE = GPIOProfile(
@@ -86,9 +89,36 @@ ESP32_DEVKIT_V1_PROFILE = GPIOProfile(
     safe_recommended_pins=SAFE_RECOMMENDED_PINS,
 )
 
+# Capability-only profile: this is deliberately not a keyboard pin map.  The
+# exposed-pin set follows Apache NuttX's ESP32-C3 Super Mini board pinout:
+# https://nuttx.apache.org/docs/latest/platforms/risc-v/esp32c3/boards/esp32c3-supermini/index.html
+# Chip restrictions follow Espressif's ESP32-C3 GPIO documentation:
+# https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/peripherals/gpio.html
+# GPIO2/8/9 are straps, GPIO8 is also the usual board LED, GPIO9 is BOOT, and
+# GPIO20/21 are UART0.  Native USB uses non-header GPIO18/19 and must remain
+# available to the transport adapter.
+ESP32_C3_SUPER_MINI_PROFILE = GPIOProfile(
+    name="esp32c3",
+    available_pins=frozenset((*range(0, 11), 20, 21)),
+    flash_reserved_pins=frozenset(range(12, 18)),
+    input_only_pins=frozenset(),
+    strapping_warnings={
+        2: "strapping pin; the external circuit can affect boot state",
+        8: "strapping pin and on-board LED; the external circuit can affect boot state",
+        9: "BOOT strapping pin; LOW at reset enters download mode",
+    },
+    uart_warnings={
+        20: "UART0 RX; assignment can conflict with serial programming or diagnostics",
+        21: "UART0 TX; assignment can conflict with serial programming or diagnostics",
+    },
+    safe_recommended_pins=(0, 1, 3, 4, 5, 6, 7, 10),
+    max_pin=21,
+    board_label="ESP32-C3 Super Mini",
+)
+
 _PROFILES: dict[str, GPIOProfile | None] = {
     "esp32": ESP32_DEVKIT_V1_PROFILE,
-    "esp32c3": None,
+    "esp32c3": ESP32_C3_SUPER_MINI_PROFILE,
 }
 
 
@@ -101,6 +131,11 @@ def _resolve_profile(profile: str | GPIOProfile) -> GPIOProfile:
     if resolved is None:
         raise ValueError(f"GPIO capability profile {profile!r} is not yet defined")
     return resolved
+
+
+def get_gpio_profile(profile: str | GPIOProfile) -> GPIOProfile:
+    """Resolve a named capability profile without exposing the registry."""
+    return _resolve_profile(profile)
 
 
 def _coerce_role(role: PinRole | str) -> PinRole:
@@ -123,11 +158,12 @@ def validate_gpio_pin(
         return GPIOValidation(pin, resolved_role, "GPIO assignment is required")
     if type(pin) is not int:
         return GPIOValidation(pin, resolved_role, "GPIO assignment must be an integer")
-    if pin < GPIO_MIN or pin > GPIO_MAX:
+    if pin < capabilities.min_pin or pin > capabilities.max_pin:
         return GPIOValidation(
             pin,
             resolved_role,
-            f"GPIO {pin} is outside the ESP32 range {GPIO_MIN}..{GPIO_MAX}",
+            f"GPIO {pin} is outside the {capabilities.name} range "
+            f"{capabilities.min_pin}..{capabilities.max_pin}",
         )
     if pin in capabilities.flash_reserved_pins:
         return GPIOValidation(
@@ -139,7 +175,7 @@ def validate_gpio_pin(
         return GPIOValidation(
             pin,
             resolved_role,
-            f"GPIO {pin} is not available on the ESP32-WROOM-32 / 30-pin DevKit V1",
+            f"GPIO {pin} is not available on the {capabilities.board_label}",
         )
     if resolved_role is PinRole.OUTPUT and pin in capabilities.input_only_pins:
         return GPIOValidation(

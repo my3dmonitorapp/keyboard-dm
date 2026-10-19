@@ -90,6 +90,21 @@ typedef struct {
     uint32_t crc32;
 } kb_config_t;
 
+typedef enum {
+    KB_CONFIG_BUILD_OK = 0,
+    KB_CONFIG_BUILD_INVALID_ARGUMENT,
+    KB_CONFIG_BUILD_VALUE_RANGE,
+    KB_CONFIG_BUILD_TOO_MANY_SWITCHES,
+    KB_CONFIG_BUILD_BUFFER_TOO_SMALL
+} kb_config_build_result_t;
+
+/* Incremental construction keeps callers out of kb_config_t's fixed buffers.
+ * It is family-neutral: target adapters provide profile/probe capabilities to
+ * kb_config_validate rather than introducing family conditionals here. */
+typedef struct {
+    kb_config_t config;
+} kb_config_builder_t;
+
 /* Platform/board capability supplied to chip-family-agnostic validation. */
 typedef struct {
     uint8_t pin_count;
@@ -152,6 +167,27 @@ typedef enum {
 } kb_config_parse_code_t;
 
 void kb_config_init(kb_config_t *config);
+kb_config_build_result_t kb_config_builder_init(kb_config_builder_t *builder,
+                                                const char *chip_class,
+                                                uint8_t rows, uint8_t cols);
+kb_config_build_result_t kb_config_builder_set_pinmap(
+    kb_config_builder_t *builder, const uint8_t *row_pins,
+    size_t row_pin_count, const uint8_t *col_pins, size_t col_pin_count,
+    kb_scan_mode_t scan_mode, kb_pull_up_source_t pull_up_source);
+kb_config_build_result_t kb_config_builder_set_electrical(
+    kb_config_builder_t *builder, uint16_t debounce_ms,
+    kb_diode_scope_t diode_scope,
+    kb_diode_direction_t board_diode_direction);
+kb_config_build_result_t kb_config_builder_set_meta(
+    kb_config_builder_t *builder, const char *project_name,
+    uint16_t project_version, uint16_t profile_version,
+    uint16_t matrix_schema_version, const char *updated);
+kb_config_build_result_t kb_config_builder_add_switch(
+    kb_config_builder_t *builder, uint8_t row, uint8_t col,
+    kb_diode_direction_t diode_direction, const kb_action_t *action);
+kb_config_build_result_t kb_config_builder_finish(kb_config_builder_t *builder,
+                                                  uint32_t generation,
+                                                  kb_config_t *output);
 void kb_config_errors_reset(kb_config_error_list_t *errors);
 bool kb_config_validate(const kb_config_t *config, const kb_hal_probe_t *probe,
                         kb_config_error_list_t *errors);

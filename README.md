@@ -1,6 +1,6 @@
 # Keyboard DM (Device Mapper)
 
-Keyboard DM (Device Mapper) is an open-source, cross-platform PySide6 GUI for configuring ESP32-based keyboards. It supports key-by-key action assignment, matrix building with explicit GPIO row and column pins and pin-safety validation, profile and project persistence as JSON, and a simulated device for verification without hardware.
+Keyboard DM (Device Mapper) is a cross-platform PySide6 GUI for configuring ESP32-based keyboards, with publicly available source code. It supports key-by-key action assignment, matrix building with explicit GPIO row and column pins and pin-safety validation, profile and project persistence as JSON, and a simulated device for verification without hardware.
 
 ## Features
 
@@ -20,10 +20,12 @@ Keyboard DM (Device Mapper) is an open-source, cross-platform PySide6 GUI for co
 git clone https://github.com/my3dmonitorapp/keyboard-dm.git
 cd keyboard-dm
 
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install PySide6==6.12.0 pytest==9.1.1
 ```
+
+Ubuntu prerequisite: the `python3-venv` package must be installed before creating the virtual environment (`sudo apt install python3-venv`).
 
 Launch the PySide6 6.12 (Qt 6) desktop GUI from the repository root. A graphical display is required:
 
@@ -45,7 +47,7 @@ python -m desktop_app --smoke
 
 ## Hardware direction
 
-The GUI is chip-agnostic in this state: users define rows, columns, switches, and GPIO pins for their ESP32 board. Real-hardware firmware flashing is not part of this repository state.
+The GUI is chip-agnostic in this state: users define rows, columns, switches, and GPIO pins for their ESP32 board. GPIO safety validation currently targets the classic ESP32. Real-hardware firmware flashing is not part of this repository state.
 
 ## Limitations
 

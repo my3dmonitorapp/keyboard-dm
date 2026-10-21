@@ -41,7 +41,8 @@ def test_profile_round_trip_refreshes_updated_timestamp(tmp_path) -> None:
     assert loaded == written
     assert loaded["profile_version"] == 2
     assert loaded["key_count"] == 75
-    assert loaded["device"] == "/project-esp32s3"
+    assert loaded["device"] == "/keyboard-dm-profile"
+    assert loaded["chip_class"] == "esp32"
     assert loaded["updated"] != "2000-01-01T00:00:00+00:00"
     assert loaded["keys"]["K75"]["assignment"] is None
 

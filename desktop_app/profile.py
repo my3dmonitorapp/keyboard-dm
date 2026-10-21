@@ -29,7 +29,9 @@ from .action import (
 
 PROFILE_VERSION = 2
 LEGACY_PROFILE_VERSION = 1
-DEVICE = "/project-esp32s3"
+DEVICE = "/keyboard-dm-profile"
+LEGACY_DEVICES = frozenset({"/project-esp32s3"})
+SUPPORTED_CHIP_CLASSES = frozenset({"esp32", "esp32c3"})
 # Retained for the S1.1 simulated-device compatibility surface. Profile v2
 # actions themselves are validated by the action model, not this text limit.
 MAX_ASSIGNMENT_LENGTH = 32
@@ -134,8 +136,11 @@ def _serialized_assignment(value: Any, key_id: str) -> dict[str, Any] | None:
 
 
 def _validate_common(profile: Mapping[str, Any]) -> dict[str, Any]:
-    if profile.get("device") != DEVICE:
+    if profile.get("device") not in {DEVICE, *LEGACY_DEVICES}:
         raise ProfileError(f"Profile device must be '{DEVICE}'")
+    chip_class = profile.get("chip_class", "esp32")
+    if chip_class not in SUPPORTED_CHIP_CLASSES:
+        raise ProfileError("Profile chip_class must be 'esp32' or 'esp32c3'")
     _validate_timestamp(profile.get("created"), "created")
     _validate_timestamp(profile.get("updated"), "updated")
     keys = profile.get("keys")
@@ -189,7 +194,11 @@ def validate_profile(
         raise ProfileError(
             f"Unsupported profile_version {version!r}; expected 1 or {PROFILE_VERSION}"
         )
-    result = _migrate_v1(profile) if version == LEGACY_PROFILE_VERSION else profile
+    result = deepcopy(
+        _migrate_v1(profile) if version == LEGACY_PROFILE_VERSION else profile
+    )
+    result["device"] = DEVICE
+    result.setdefault("chip_class", "esp32")
     keys = _validate_common(result)
 
     if key_ids is not None:
@@ -232,12 +241,15 @@ def validate_profile(
     return result
 
 
-def create_profile(assignments: Mapping[str, Any]) -> dict[str, Any]:
+def create_profile(
+    assignments: Mapping[str, Any], chip_class: str = "esp32"
+) -> dict[str, Any]:
     """Create a version 2 profile from typed or compatibility assignments."""
     now = _timestamp()
     profile = {
         "profile_version": PROFILE_VERSION,
         "device": DEVICE,
+        "chip_class": chip_class,
         "created": now,
         "updated": now,
         "key_count": len(assignments),

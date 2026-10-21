@@ -101,10 +101,10 @@ ESP32_DEVKIT_V1_PROFILE = GPIOProfile(
 # https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/api-reference/peripherals/gpio.html
 # GPIO2 is a strap; GPIO8 is a strap plus the board LED; GPIO9 is BOOT.
 # GPIO12-17 are flash, GPIO18/19 are native USB Serial/JTAG, GPIO20/21 are
-# UART0, and documented GPIO11 is a regular free header GPIO.
+# UART0. GPIO11 is not exposed on the Super Mini header.
 ESP32_C3_SUPER_MINI_PROFILE = GPIOProfile(
     name="esp32c3",
-    available_pins=frozenset((0, 1, 3, 4, 5, 6, 7, 10, 11, 20, 21)),
+    available_pins=frozenset((0, 1, 3, 4, 5, 6, 7, 10, 20, 21)),
     flash_reserved_pins=frozenset(range(12, 18)),
     input_only_pins=frozenset(),
     strapping_warnings={
@@ -116,7 +116,7 @@ ESP32_C3_SUPER_MINI_PROFILE = GPIOProfile(
         20: "UART0 RX; assignment can conflict with serial programming or diagnostics",
         21: "UART0 TX; assignment can conflict with serial programming or diagnostics",
     },
-    safe_recommended_pins=(0, 1, 3, 4, 5, 6, 7, 10, 11),
+    safe_recommended_pins=(0, 1, 3, 4, 5, 6, 7, 10),
     max_pin=21,
     board_label="ESP32-C3 Super Mini",
 )

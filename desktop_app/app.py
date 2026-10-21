@@ -45,8 +45,8 @@ from .action import (
     SingleKeyAction,
     parse_shortcut,
 )
-from .device import SimulatedESP32S3Device
-from .esp32_gpio import PinRole, suggest_safe_pins, validate_gpio_pin
+from .device import SimulatedKeyboardDevice
+from .esp32_gpio import PinRole, get_gpio_profile, suggest_safe_pins, validate_gpio_pin
 from .fw_protocol_client import (
     FirmwareProtocolClient,
     FirmwareProtocolError,
@@ -467,12 +467,14 @@ class MatrixPinmapDialog(QDialog):
         config: MatrixConfig,
         parent: QWidget | None = None,
         changed: Callable[[], None] | None = None,
+        gpio_profile: str = "esp32",
     ) -> None:
         super().__init__(parent)
         self.setObjectName("matrixPinmapDialog")
         self.setWindowTitle("Matrix GPIO pinmap")
         self.config = config
         self._changed = changed
+        self.gpio_profile = gpio_profile
         self.row_pin_inputs: list[QLineEdit] = []
         self.column_pin_inputs: list[QLineEdit] = []
         self.row_pin_messages: list[QLabel] = []
@@ -481,7 +483,8 @@ class MatrixPinmapDialog(QDialog):
 
         root = QVBoxLayout(self)
         help_label = QLabel(
-            "ESP32-WROOM-32 scan roles: rows are outputs (driven low); columns "
+            f"{get_gpio_profile(gpio_profile).board_label} scan roles: rows are "
+            "outputs (driven low); columns "
             "are inputs with pull-ups. Every matrix line must be assigned.",
             self,
         )
@@ -639,7 +642,7 @@ class MatrixPinmapDialog(QDialog):
             ),
         ):
             for index, (pin, message) in enumerate(zip(pins, messages)):
-                result = validate_gpio_pin(pin, role)
+                result = validate_gpio_pin(pin, role, profile=self.gpio_profile)
                 pin_error = result.error
                 if (
                     pin_error is None
@@ -695,6 +698,7 @@ class MatrixPinmapDialog(QDialog):
             roles,
             min_pin=self.config.min_pin,
             max_pin=self.config.max_pin,
+            profile=self.gpio_profile,
         )
         assignments.extend(
             [None] * (self.config.rows + self.config.cols - len(assignments))
@@ -711,7 +715,7 @@ class Keyboard75Window(QMainWindow):
     def __init__(
         self,
         layout: Layout | None = None,
-        device: SimulatedESP32S3Device | None = None,
+        device: SimulatedKeyboardDevice | None = None,
         firmware_transport: FirmwareTransport | None = None,
         firmware_chip_class: str = "esp32",
     ) -> None:
@@ -720,7 +724,8 @@ class Keyboard75Window(QMainWindow):
         for key in self.layout.keys:
             action = self._action_from_assignment(key.assignment)
             key.assignment = None if action is None else self._typed_payload(action)
-        self.device = device or SimulatedESP32S3Device(
+        get_gpio_profile(firmware_chip_class)
+        self.device = device or SimulatedKeyboardDevice(
             key.key_id for key in self.layout.keys
         )
         if device is not None:
@@ -825,6 +830,7 @@ class Keyboard75Window(QMainWindow):
             assignments,
             self.current_profile_path,
             self.matrix_config if self.layout.label == "matrix" else None,
+            chip_class=self._firmware_chip_class,
         )
 
     def _unsupported_firmware_action_ids(
@@ -1012,6 +1018,7 @@ class Keyboard75Window(QMainWindow):
         layout.setSpacing(6)
 
         heading_row = QHBoxLayout()
+        target_row = QHBoxLayout()
         controls_row = QHBoxLayout()
 
         title = QLabel("Keyboard DM Layout Editor", top_bar)
@@ -1020,6 +1027,15 @@ class Keyboard75Window(QMainWindow):
         self.device_status_label.setObjectName("deviceStatusLabel")
         self.transport_label = QLabel(top_bar)
         self.transport_label.setObjectName("transportLabel")
+
+        self.board_combo = QComboBox(top_bar)
+        self.board_combo.setObjectName("boardSelector")
+        self.board_combo.addItem("classic ESP32-WROOM-32", "esp32")
+        self.board_combo.addItem("ESP32-C3 Super Mini", "esp32c3")
+        self.board_combo.setCurrentIndex(
+            self.board_combo.findData(self._firmware_chip_class)
+        )
+        self.board_combo.currentIndexChanged.connect(self._board_changed)
 
         self.host_connected_checkbox = QCheckBox("USB host connected", top_bar)
         self.host_connected_checkbox.setObjectName("hostConnectedCheckbox")
@@ -1036,15 +1052,34 @@ class Keyboard75Window(QMainWindow):
         heading_row.addWidget(title)
         heading_row.addStretch()
         heading_row.addWidget(self.host_connected_checkbox)
+        target_row.addWidget(QLabel("Target board", top_bar))
+        target_row.addWidget(self.board_combo)
+        target_row.addStretch()
         controls_row.addWidget(self.device_status_label)
         controls_row.addWidget(self.transport_label)
         controls_row.addStretch()
         controls_row.addWidget(self.connect_button)
         controls_row.addWidget(self.disconnect_button)
         layout.addLayout(heading_row)
+        layout.addLayout(target_row)
         layout.addLayout(controls_row)
         self._refresh_device_status()
         return top_bar
+
+    def _board_changed(self) -> None:
+        """Adopt the visible target board for validation and serialization."""
+        chip_class = self.board_combo.currentData()
+        get_gpio_profile(chip_class)
+        self._firmware_chip_class = chip_class
+        if self._firmware_transport is not None and hasattr(
+            self._firmware_transport, "profile"
+        ):
+            self._firmware_transport.profile = chip_class
+        if self.matrix_pinmap_dialog is not None:
+            self.matrix_pinmap_dialog.gpio_profile = chip_class
+            self.matrix_pinmap_dialog.refresh_validation()
+        self._refresh_device_status()
+        self._set_dirty(True)
 
     def _build_provisional_banner(self) -> QLabel:
         banner = QLabel(self.layout.label, self)
@@ -1264,7 +1299,10 @@ class Keyboard75Window(QMainWindow):
         if self.layout.label != "matrix" or self.matrix_config is None:
             return None
         dialog = MatrixPinmapDialog(
-            self.matrix_config, self, changed=lambda: self._set_dirty(True)
+            self.matrix_config,
+            self,
+            changed=lambda: self._set_dirty(True),
+            gpio_profile=self._firmware_chip_class,
         )
         self.matrix_pinmap_dialog = dialog
         dialog.exec()
@@ -1988,6 +2026,7 @@ class Keyboard75Window(QMainWindow):
             self._refresh_keycap(key)
 
         self.profile = profile
+        self._set_board(profile["chip_class"])
         self.current_profile_path = Path(path)
         if self.selected_key is not None:
             self._load_action_into_editor(
@@ -2000,9 +2039,10 @@ class Keyboard75Window(QMainWindow):
         """Save assignments to local JSON only, never to device hardware."""
         assignments = {key.key_id: key.assignment for key in self.layout.keys}
         if self.profile is None:
-            profile = create_profile(assignments)
+            profile = create_profile(assignments, chip_class=self._firmware_chip_class)
         else:
             profile = dict(self.profile)
+            profile["chip_class"] = self._firmware_chip_class
             profile["keys"] = {
                 key_id: {"assignment": assignment}
                 for key_id, assignment in assignments.items()
@@ -2091,6 +2131,7 @@ class Keyboard75Window(QMainWindow):
             assignments,
             self.current_profile_path,
             self.matrix_config if self.layout.label == "matrix" else None,
+            chip_class=self._firmware_chip_class,
         )
         saved_path = save_project_file(target, document)
         self.profile = document
@@ -2106,6 +2147,7 @@ class Keyboard75Window(QMainWindow):
         if not self.confirm_unsaved_changes():
             return False
         loaded = load_project_file(path, fallback_layout=self.layout)
+        self._set_board(loaded.chip_class)
         self._install_layout(Layout.from_dict(loaded.layout.to_dict()))
         self.matrix_config = (
             MatrixConfig.from_dict(loaded.matrix_config.to_dict())
@@ -2133,6 +2175,20 @@ class Keyboard75Window(QMainWindow):
         self.current_project_path = Path(path)
         self._set_dirty(False)
         return True
+
+    def _set_board(self, chip_class: str) -> None:
+        index = self.board_combo.findData(chip_class)
+        if index < 0:
+            raise ValueError(f"Unsupported board target {chip_class!r}")
+        self.board_combo.blockSignals(True)
+        self.board_combo.setCurrentIndex(index)
+        self.board_combo.blockSignals(False)
+        self._firmware_chip_class = chip_class
+        if self._firmware_transport is not None and hasattr(
+            self._firmware_transport, "profile"
+        ):
+            self._firmware_transport.profile = chip_class
+        self._refresh_device_status()
 
     def _new_project_dialog(self) -> None:
         name, accepted = QInputDialog.getText(self, "New keyboard project", "Name")

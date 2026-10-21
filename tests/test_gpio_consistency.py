@@ -82,7 +82,7 @@ def test_family_profiles_remain_distinct() -> None:
     assert classic.flash_reserved_pins != c3.flash_reserved_pins
     assert classic.input_only_pins != c3.input_only_pins
     assert 11 not in classic.available_pins
-    assert 11 in c3.available_pins
+    assert 11 not in c3.available_pins
 
 
 def test_documented_68_key_matrix_pin_arithmetic() -> None:

@@ -1,4 +1,4 @@
-"""Deterministic simulated ESP32-S3 device for Milestone S1.
+"""Deterministic simulated Keyboard DM device.
 
 This module deliberately performs no hardware, USB, BLE, socket, or network
 operations.  It models only the small device API needed by the desktop app.
@@ -18,7 +18,7 @@ class DeviceConnectionError(RuntimeError):
     """Raised when an operation requires a connected simulated device."""
 
 
-class SimulatedESP32S3Device:
+class SimulatedKeyboardDevice:
     """In-memory simulation of the simulated Keyboard DM ESP32 board.
 
     The active transport defaults to BLE. Calling :meth:`set_host_connected`

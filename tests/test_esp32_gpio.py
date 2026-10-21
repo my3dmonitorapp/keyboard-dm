@@ -102,14 +102,21 @@ def test_gpio39_is_allowed_for_an_input_role() -> None:
 
 def test_esp32c3_super_mini_profile_is_capability_only_and_usable() -> None:
     assert ESP32_C3_SUPER_MINI_PROFILE.available_pins == frozenset(
-        (0, 1, 3, 4, 5, 6, 7, 10, 11, 20, 21)
+        (0, 1, 3, 4, 5, 6, 7, 10, 20, 21)
     )
     assert validate_gpio_pin(4, PinRole.OUTPUT, profile="esp32c3").valid
     assert "SPI flash" in validate_gpio_pin(
         12, PinRole.INPUT, profile="esp32c3"
     ).error
-    assert validate_gpio_pin(11, PinRole.INPUT, profile="esp32c3").valid
+    assert not validate_gpio_pin(11, PinRole.INPUT, profile="esp32c3").valid
     assert not validate_gpio_pin(18, PinRole.INPUT, profile="esp32c3").valid
+
+
+@pytest.mark.parametrize("pin", range(12, 18))
+def test_esp32c3_flash_pins_are_rejected(pin: int) -> None:
+    result = validate_gpio_pin(pin, PinRole.INPUT, profile="esp32c3")
+    assert not result.valid
+    assert "SPI flash" in result.error
 
 
 @pytest.mark.parametrize("pin", [2, 8, 9])
@@ -121,7 +128,7 @@ def test_esp32c3_strapping_pins_are_unavailable(pin: int) -> None:
 
 def test_esp32c3_suggestions_avoid_straps_uart_usb_and_invented_wiring() -> None:
     suggestions = suggest_safe_pins(9, profile="esp32c3")
-    assert suggestions == [0, 1, 3, 4, 5, 6, 7, 10, 11]
+    assert suggestions == [0, 1, 3, 4, 5, 6, 7, 10]
     assert set(suggestions).isdisjoint({2, 8, 9, 18, 19, 20, 21})
 
 

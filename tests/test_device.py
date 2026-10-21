@@ -10,7 +10,9 @@ from desktop_app.action import (
     ShortcutAction,
     SingleKeyAction,
 )
-from desktop_app.device import DeviceConnectionError, SimulatedESP32S3Device
+from desktop_app.device import DeviceConnectionError, SimulatedKeyboardDevice
+
+SimulatedESP32S3Device = SimulatedKeyboardDevice
 from desktop_app.layouts import L06, L12
 
 

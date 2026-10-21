@@ -1,10 +1,10 @@
 #include "kbdm_idf_hal.h"
 
-/* Conservative SoC restrictions. GPIO18/19 preserve USB Serial/JTAG. */
+/* Board restrictions. GPIO11 has no header pad; GPIO18/19 preserve USB. */
 static const kb_hal_probe_t capabilities = {
     .pin_count = 22,
-    .reserved_pin_count = 11,
-    .reserved_pins = {2, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19},
+    .reserved_pin_count = 12,
+    .reserved_pins = {2, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19},
     .input_only_pin_count = 0,
     .external_pullup_pin_count = 0,
 };

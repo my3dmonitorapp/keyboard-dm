@@ -197,6 +197,8 @@ def validate_profile(
     result = deepcopy(
         _migrate_v1(profile) if version == LEGACY_PROFILE_VERSION else profile
     )
+    if result.get("device") not in {DEVICE, *LEGACY_DEVICES}:
+        raise ProfileError(f"Profile device must be '{DEVICE}'")
     result["device"] = DEVICE
     result.setdefault("chip_class", "esp32")
     keys = _validate_common(result)

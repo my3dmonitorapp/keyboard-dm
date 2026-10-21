@@ -51,6 +51,7 @@ from .fw_protocol_client import (
     FirmwareProtocolClient,
     FirmwareProtocolError,
     FirmwareTransport,
+    verify_firmware_identity,
 )
 from .layout_model import Key, Layout
 from .layouts import BUILT_IN_LAYOUTS, L75, make_custom_layout
@@ -888,6 +889,7 @@ class Keyboard75Window(QMainWindow):
 
         client = FirmwareProtocolClient(transport)
         try:
+            verify_firmware_identity(client, self._firmware_chip_class)
             status = client.status()
             generation = status.get("active_generation")
             if type(generation) is not int or generation < 0:
@@ -918,17 +920,19 @@ class Keyboard75Window(QMainWindow):
             phases.append("Identical readback verified")
             self._set_upload_phases(phases)
 
-            reboot_status = client.reboot()
-            if (
-                reboot_status.get("state") != 2
-                or reboot_status.get("active_generation") != committed.get("generation")
-                or stable_json_bytes(client.get_config()) != raw
-            ):
-                raise FirmwareProtocolError(
-                    "persistence_mismatch",
-                    "configuration changed after simulated reboot",
-                )
-            phases.append("Persistence after simulated reboot verified")
+            if hasattr(transport, "reboot"):
+                reboot_status = client.reboot()
+                if (
+                    reboot_status.get("state") != 2
+                    or reboot_status.get("active_generation")
+                    != committed.get("generation")
+                    or stable_json_bytes(client.get_config()) != raw
+                ):
+                    raise FirmwareProtocolError(
+                        "persistence_mismatch",
+                        "configuration changed after simulated reboot",
+                    )
+                phases.append("Persistence after simulated reboot verified")
             self._set_upload_phases(phases)
             return True
         except Exception as error:
@@ -1043,7 +1047,7 @@ class Keyboard75Window(QMainWindow):
 
         self.connect_button = QPushButton("Connect", top_bar)
         self.connect_button.setObjectName("connectButton")
-        self.connect_button.clicked.connect(self.connect_device)
+        self.connect_button.clicked.connect(self._show_connect_dialog)
 
         self.disconnect_button = QPushButton("Disconnect", top_bar)
         self.disconnect_button.setObjectName("disconnectButton")
@@ -1947,8 +1951,78 @@ class Keyboard75Window(QMainWindow):
         self.device.connect()
         self._refresh_device_status()
 
+    def _show_connect_dialog(self) -> None:
+        """Choose the simulator or explicitly open a discovered serial port."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Connect device")
+        form = QFormLayout(dialog)
+        mode_combo = QComboBox(dialog)
+        mode_combo.addItem("Simulated", "simulated")
+        mode_combo.addItem("USB serial", "serial")
+        port_combo = QComboBox(dialog)
+        kind_combo = QComboBox(dialog)
+        kind_combo.addItem("Classic ESP32 USB-UART", "usb_uart")
+        kind_combo.addItem("ESP32-C3 native USB Serial/JTAG", "c3_native_usart")
+        form.addRow("Connection", mode_combo)
+        form.addRow("Port", port_combo)
+        form.addRow("Transport", kind_combo)
+        try:
+            from .serial_transport import discover_serial_ports
+
+            for entry in discover_serial_ports():
+                label = entry["port"]
+                if entry["description"]:
+                    label += f" — {entry['description']}"
+                port_combo.addItem(label, entry["port"])
+        except RuntimeError as error:
+            port_combo.addItem(str(error), None)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+
+        def update_mode() -> None:
+            enabled = mode_combo.currentData() == "serial"
+            port_combo.setEnabled(enabled)
+            kind_combo.setEnabled(enabled)
+
+        mode_combo.currentIndexChanged.connect(update_mode)
+        update_mode()
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if mode_combo.currentData() == "simulated":
+            self.connect_device()
+            return
+        port = port_combo.currentData()
+        if port is None:
+            QMessageBox.warning(self, "USB serial", "No serial port is available.")
+            return
+        from .serial_transport import SerialTransportError, USBSerialTransport
+
+        transport = USBSerialTransport(port, transport_kind=kind_combo.currentData())
+        try:
+            transport.connect()
+        except SerialTransportError as error:
+            QMessageBox.warning(self, "USB serial", str(error))
+            return
+        self._firmware_transport = transport
+        self.upload_configuration_action.setEnabled(True)
+        self.upload_status_label.setText("Configuration upload: ready")
+        self.statusBar().showMessage(f"Connected to {port}", 5000)
+        self._refresh_device_status()
+
     def disconnect_device(self) -> None:
         """Disconnect the simulated device and refresh the top-bar state."""
+        if self._firmware_transport is not None and hasattr(
+            self._firmware_transport, "disconnect"
+        ):
+            self._firmware_transport.disconnect()
+            self._firmware_transport = None
+            self.upload_configuration_action.setEnabled(False)
         self.device.disconnect()
         self._refresh_device_status()
 
@@ -1958,20 +2032,29 @@ class Keyboard75Window(QMainWindow):
         self._refresh_device_status()
 
     def _refresh_device_status(self) -> None:
-        state = "connected" if self.device.is_connected() else "not connected"
+        serial_connected = bool(
+            self._firmware_transport is not None
+            and getattr(self._firmware_transport, "is_connected", False)
+        )
+        connected = self.device.is_connected() or serial_connected
+        state = "connected" if connected else "not connected"
         layout_summary = f"{self.layout.name} ({self.layout.key_count} keys)"
+        connection = "USB serial" if serial_connected else "simulated"
         self.device_status_label.setText(
-            f"Device: {state} (simulated) — {layout_summary}"
+            f"Device: {state} ({connection}) — {layout_summary}"
         )
         if hasattr(self, "simulated_device_status_label"):
             self.simulated_device_status_label.setText(
                 f"Device: {state} (simulated) — {layout_summary}"
             )
-        self.transport_label.setText(
-            f"Transport: {self.device.get_transport().upper()}"
+        transport_name = (
+            self._firmware_transport.transport_kind
+            if serial_connected
+            else self.device.get_transport()
         )
-        self.connect_button.setEnabled(not self.device.is_connected())
-        self.disconnect_button.setEnabled(self.device.is_connected())
+        self.transport_label.setText(f"Transport: {transport_name.upper()}")
+        self.connect_button.setEnabled(not connected)
+        self.disconnect_button.setEnabled(connected)
 
     def _set_dirty(self, dirty: bool) -> None:
         self.dirty = dirty

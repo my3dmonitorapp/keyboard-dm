@@ -142,6 +142,29 @@ class FirmwareProtocolClient:
         return self.status()
 
 
+def verify_firmware_identity(
+    client: FirmwareProtocolClient, selected_chip_class: str
+) -> None:
+    """Reject incompatible protocols and known active board configurations."""
+    version = client.version()
+    if version.get("protocol") != PROTOCOL_VERSION or version.get("active_protocol") != 1:
+        raise FirmwareProtocolError(
+            "unsupported_protocol", "firmware protocol 0.1 (active protocol 1) is required"
+        )
+    try:
+        config = client.get_config()
+    except FirmwareProtocolError as error:
+        if error.code == "not_found":
+            return
+        raise
+    chip_class = config.get("chip_class")
+    if chip_class is not None and chip_class != selected_chip_class:
+        raise FirmwareProtocolError(
+            "board_mismatch",
+            f"active configuration is for {chip_class}, selected target is {selected_chip_class}",
+        )
+
+
 @dataclass
 class InMemoryFirmwareStorage:
     """Persistent state retained when a simulated endpoint is rebooted."""

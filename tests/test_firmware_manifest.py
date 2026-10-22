@@ -153,7 +153,7 @@ def test_reference_artifacts_load_and_match_f30() -> None:
     assert c3.image("bootloader.bin").offset == 0x0
     assert c3.image("bootloader.bin").size_bytes == 20368
     assert c3.image("bootloader.bin").sha256 == (
-        "05c45f65064c5739ed3e53c544469a745b9c9290dcdbc97ae3f888b87b728fd6"
+        "9d008db00d5052caf3bdb3038e88e39bdecf87a8861425067eb18eb2d5453641"
     )
     assert c3.image("partition-table.bin").offset == 0x8000
     assert c3.image("partition-table.bin").size_bytes == 3072
@@ -161,9 +161,9 @@ def test_reference_artifacts_load_and_match_f30() -> None:
         "a11982a2601a607baadac94c0f21fdb7fdbf910249ed5ba58af40be62c2ee98a"
     )
     assert c3.image("kbdm_esp32c3.bin").offset == 0x10000
-    assert c3.image("kbdm_esp32c3.bin").size_bytes == 851760
+    assert c3.image("kbdm_esp32c3.bin").size_bytes == 851840
     assert c3.image("kbdm_esp32c3.bin").sha256 == (
-        "8074587a345214aaca9399c8798f0b83000c54428cd7eb18601093d324c74fc7"
+        "24d1c4e991979b3581e44cec61e41645febe87221aee66dc8f4b2df3017287e8"
     )
     assert lookup_reference("kbdm-esp32c3") is c3
     assert lookup_reference("nope") is None
@@ -176,7 +176,7 @@ def test_reference_artifacts_load_and_match_f30() -> None:
     assert esp32.image("bootloader.bin").offset == 0x1000
     assert esp32.image("bootloader.bin").size_bytes == 26784
     assert esp32.image("bootloader.bin").sha256 == (
-        "2e48bc2952504312963c0bd193093cdffd6197f7d0182413be3e297226aa02b1"
+        "043a925b8f35280a9ba6c3e83e81554d1408fd655abef70dcc105d2b6d7b034e"
     )
     assert esp32.image("partition-table.bin").offset == 0x8000
     assert esp32.image("partition-table.bin").size_bytes == 3072
@@ -184,9 +184,9 @@ def test_reference_artifacts_load_and_match_f30() -> None:
         "a11982a2601a607baadac94c0f21fdb7fdbf910249ed5ba58af40be62c2ee98a"
     )
     assert esp32.image("kbdm_esp32.bin").offset == 0x10000
-    assert esp32.image("kbdm_esp32.bin").size_bytes == 786464
+    assert esp32.image("kbdm_esp32.bin").size_bytes == 786480
     assert esp32.image("kbdm_esp32.bin").sha256 == (
-        "642562e849b515df0442c77299ace34161350fbbac90e93886e96592c44c38fa"
+        "36d2844e9d4c6730aff1b3ac4bff1e354ec2b5fdd12812694d3dfbd3a7716ee4"
     )
 
 

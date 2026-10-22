@@ -199,8 +199,8 @@ def _ref(name: str, version: str, family: str, size: str, mode: str, freq: str,
     }
 
 
-#: Reference artifacts from a clean CI rebuild on 2026-10-18 using ESP-IDF
-#: v5.1.6 and firmware source at commit 103daa9. Compile-verified only; NOT
+#: Reference artifacts from a clean RTX rebuild on 2026-10-22 using ESP-IDF
+#: v5.1.6 and firmware source at commit fe17403. Compile-verified only; NOT
 #: hardware-tested and NOT bit-exact reproducible against the original F2.1
 #: build because of build-configuration drift. Kept in-repo (no device data).
 KNOWN_REFERENCE_ARTIFACTS: tuple[FirmwareManifest, ...] = (
@@ -208,28 +208,28 @@ KNOWN_REFERENCE_ARTIFACTS: tuple[FirmwareManifest, ...] = (
         "kbdm-esp32", "f3.0.0", "esp32", "4MB", "dio", "40m",
         (
             {"file_name": "bootloader.bin", "offset": 0x1000, "sha256":
-             "2e48bc2952504312963c0bd193093cdffd6197f7d0182413be3e297226aa02b1",
+             "043a925b8f35280a9ba6c3e83e81554d1408fd655abef70dcc105d2b6d7b034e",
              "size_bytes": 26784},
             {"file_name": "partition-table.bin", "offset": 0x8000, "sha256":
              "a11982a2601a607baadac94c0f21fdb7fdbf910249ed5ba58af40be62c2ee98a",
              "size_bytes": 3072},
             {"file_name": "kbdm_esp32.bin", "offset": 0x10000, "sha256":
-             "642562e849b515df0442c77299ace34161350fbbac90e93886e96592c44c38fa",
-             "size_bytes": 786464},
+             "36d2844e9d4c6730aff1b3ac4bff1e354ec2b5fdd12812694d3dfbd3a7716ee4",
+             "size_bytes": 786480},
         ),
     )),
     manifest_from_dict(_ref(
         "kbdm-esp32c3", "f3.0.0", "esp32c3", "4MB", "dio", "80m",
         (
             {"file_name": "bootloader.bin", "offset": 0x0, "sha256":
-             "05c45f65064c5739ed3e53c544469a745b9c9290dcdbc97ae3f888b87b728fd6",
+             "9d008db00d5052caf3bdb3038e88e39bdecf87a8861425067eb18eb2d5453641",
              "size_bytes": 20368},
             {"file_name": "partition-table.bin", "offset": 0x8000, "sha256":
              "a11982a2601a607baadac94c0f21fdb7fdbf910249ed5ba58af40be62c2ee98a",
              "size_bytes": 3072},
             {"file_name": "kbdm_esp32c3.bin", "offset": 0x10000, "sha256":
-             "8074587a345214aaca9399c8798f0b83000c54428cd7eb18601093d324c74fc7",
-             "size_bytes": 851760},
+             "24d1c4e991979b3581e44cec61e41645febe87221aee66dc8f4b2df3017287e8",
+             "size_bytes": 851840},
         ),
     )),
 )
@@ -252,6 +252,5 @@ def verify_file_sha256(path: str | Path, expected_sha256: str) -> bool:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest() == expected_sha256.lower()
-
 
 

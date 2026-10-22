@@ -39,12 +39,12 @@ def test_pin_edits_update_model_and_report_conflict_and_range_live(
 
     for editor, pin in zip(
         dialog.row_pin_inputs + dialog.column_pin_inputs,
-        [4, 5, 10, 11, 13, 14, 16],
+        [4, 13, 14, 16, 17, 18, 19],
     ):
         editor.setText(str(pin))
 
     assert config.row_pins[0] == 4
-    assert config.column_pins[0] == 11
+    assert config.column_pins[0] == 16
     assert dialog.status_label.text() == "Pinmap valid"
 
     dialog.column_pin_inputs[1].setText("4")
@@ -69,13 +69,15 @@ def test_pin_range_suggest_and_clear_are_model_backed(pinmap_window) -> None:
 
     assert config.min_pin == 10
     assert config.max_pin == 16
-    assert config.row_pins == [10, 11, 13]
-    assert config.column_pins == [14, 16, None, None]
+    assert config.row_pins == [13, 14, 16]
+    assert config.column_pins == [None, None, None, None]
     assigned = [
         pin for pin in config.row_pins + config.column_pins if pin is not None
     ]
-    assert len(set(assigned)) == 5
-    assert all(pin not in {0, 2, 3, 6, 7, 8, 9, 12, 15} for pin in assigned)
+    assert len(set(assigned)) == 3
+    assert set(assigned) <= {
+        4, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33,
+    }
     assert "GPIO assignment is required" in dialog.status_label.text()
 
     dialog.clear_button.click()

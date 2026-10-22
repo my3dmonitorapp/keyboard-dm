@@ -1,0 +1,3 @@
+# Keyboard DM desktop runtime dependencies
+PySide6
+pyserial

@@ -41,7 +41,8 @@ def test_profile_round_trip_refreshes_updated_timestamp(tmp_path) -> None:
     assert loaded == written
     assert loaded["profile_version"] == 2
     assert loaded["key_count"] == 75
-    assert loaded["device"] == "/project-esp32s3"
+    assert loaded["device"] == "/keyboard-dm-profile"
+    assert loaded["chip_class"] == "esp32"
     assert loaded["updated"] != "2000-01-01T00:00:00+00:00"
     assert loaded["keys"]["K75"]["assignment"] is None
 
@@ -85,6 +86,22 @@ def test_unknown_profile_version_is_rejected(tmp_path) -> None:
 
     with pytest.raises(ProfileError, match="Unsupported profile_version"):
         load_profile(path, key_ids=LEGACY_KEY_IDS)
+
+
+def test_device_is_validated_before_legacy_normalization(tmp_path) -> None:
+    profile = create_profile({"K01": None})
+    profile["device"] = "/project-esp32s3-bogus"
+    bogus = tmp_path / "bogus.json"
+    bogus.write_text(json.dumps(profile), encoding="utf-8")
+    with pytest.raises(ProfileError, match="Profile device"):
+        load_profile(bogus)
+
+    profile["device"] = "/project-esp32s3"
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(json.dumps(profile), encoding="utf-8")
+    loaded = load_profile(legacy)
+    assert loaded["device"] == "/keyboard-dm-profile"
+    assert loaded["chip_class"] == "esp32"
 
 
 def test_variable_key_profile_validates_without_expected_key_set() -> None:

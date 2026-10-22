@@ -1,69 +1,92 @@
-# Keyboard DM — Development Workflow (Hermes → Codex)
+# Keyboard DM — Development Workflow (Hermes → Codex on RTX)
 
-Verified 2026-10-11, Codex CLI 0.161.0 on `dev-machine` (SSH alias `/project`).
+Updated 2026-10-12. **RTX Ubuntu desktop (`daniele@10.8.0.6`) is the sole
+authoritative development host.** Codex CLI 0.149.1, native install at
+`~/.local/bin/codex`, invoked as `~/.local/bin/codex -m gpt-5.6-sol` via the
+SSH alias `rtx`.
 
-## Model & authentication
-- **Selected model: `gpt-5.6-sol`** (GPT-5.6-Sol, "Latest workhorse model for coding",
-  supported_in_api=true, not deprecated).
-- **Explicitly NOT Astra.** The user's laptop global config has
-  `model = "gpt-6-astra"` — we override it every run with `-m gpt-5.6-sol`.
-  Astra / Astra Pro / any variant: never used, no automatic model switching.
-- **Auth: existing ChatGPT login (OAuth) on the laptop.** No API keys, no new
-  subscriptions, no separately billed calls. ChatGPT auth and global Codex
-  config are untouched.
-- Do NOT run Codex with `HOME` redirected — the ChatGPT auth lives in the
-  user's home and a redirected HOME yields 401 Unauthorized.
+## Authoritative host model (supersedes the earlier laptop-only rule)
 
-## Exact execution pattern (invoke from the VPS)
+- **Development host:** RTX Ubuntu (`daniele-MS-7A40`, Ubuntu 26.04, `x86_64`,
+  12 cores, ~30 GB RAM). Repo lives at `~/projects/keyboard75`. This is the only
+  machine where coding, commits, and pushes happen.
+- **Laptop (10.8.0.x):** GUI/visual test client ONLY. It keeps a separate GitHub
+  checkout to *run* the PySide6 app visually. It is NOT used for Codex,
+  authoritative coding, firmware builds, or primary Git commits. Development
+  must not depend on the laptop being powered on.
+- **CI VM (`/root/kb75_ci`):** independent, read-only verification only —
+  firmware host test suite + `esp32`/`esp32c3` ESP-IDF compiles and desktop
+  pytest against *published* commits. VM never develops.
+- **GitHub:** the authoritative published source. Every verified change is
+  committed on the appropriate feature branch, pushed to GitHub, and the
+  corresponding PR updated immediately. A task is not complete while its
+  verified changes exist only locally.
+
+## Model & authentication (RTX)
+
+- **Selected model: `gpt-5.6-sol`**, always pinned explicitly with
+  `-m gpt-5.6-sol`.
+- **Explicitly NOT Astra / Astra Pro / any variant** — never used, no
+  automatic model switching.
+- **Auth on RTX: an API key** stored in `~/.codex/auth.json` (key value never
+  shown or copied between machines). Codex is the native installed binary
+  (`codex-cli 0.149.1`), on PATH for the `daniele` user.
+- Do NOT run Codex with `HOME` redirected — the auth lives in the user's home.
+
+## Exact execution pattern (from Hermes on the VPS)
+
 ```bash
-ssh /project 'export PATH=$HOME/.local/bin:$PATH; cd /projects/<project>;
-  timeout 600 codex exec -s workspace-write --ephemeral -m gpt-5.6-sol --json \
-  -o /tmp/kb75_lastmsg.txt "<task prompt>" </dev/null > /tmp/kb75_run.out 2> /tmp/kb75_run.err'
+ssh rtx 'export PATH=$HOME/.local/bin:$PATH; cd ~/projects/keyboard75;
+  timeout 600 ~/.local/bin/codex exec -s workspace-write --ephemeral -m gpt-5.6-sol \
+  "<task prompt>" </dev/null'
 ```
-- `</dev/null` — never hang on stdin (non-interactive sessions have no TTY).
-- `export PATH` — codex is not on the default PATH of non-interactive SSH
-  sessions.
-- Must run **inside** `/projects/<project>` (Codex trusted-dir check).
-- Verify: `echo $?` after the run; read `/tmp/kb75_lastmsg.txt` (final answer);
-  parse the JSONL in `/tmp/kb75_run.out` for `item.completed` / `turn.completed`
-  events; check `git -C /projects/<project> status` and
-  `git diff` for modified files before accepting.
-- `--ephemeral` keeps the local session out of Codex history; drop it if
-  conversation continuity across runs is ever needed.
+- `rtx` = SSH alias for `daniele@10.8.0.6` (dedicated key
+  `~/.ssh/id_ed25519_rtx`, `IdentitiesOnly yes`).
+- `</dev/null` — never hang on stdin (no TTY).
+- Run **inside** `~/projects/keyboard75` (Codex trusted-dir check); use
+  `--skip-git-repo-check` only if outside a repo.
+- After a run: `echo $?`, `git -C ~/projects/keyboard75 status`, `git diff`
+  before accepting.
+
+## GitHub access (RTX)
+
+- **Dedicated repository-scoped deploy key**, distinct from the Finance AI key:
+  - Alias: `github-keyboard-dm` → `user git`,
+    `IdentityFile ~/.ssh/id_ed25519_github_keyboard_dm`, `IdentitiesOnly yes`.
+  - Repo origin: `git@github-keyboard-dm:my3dmonitorapp/keyboard-dm.git`.
+  - Registered in GitHub → Deploy keys with **Allow write access**.
+  - The Finance AI alias (`github-finance-ai`, key
+    `~/.ssh/id_ed25519_github_finance_ai`) is untouched and still serves the
+    other repos. No shared key is ever mixed between the two.
+- Read/write verified by temp-branch push + delete (no branch left).
+
+## Build & test split
+- Desktop + firmware-**host** tests run on RTX:
+  - `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/ -q` (353/353)
+  - `make -C firmware/host clean test` (12 binaries)
+- Full **firmware compile** (`esp32`, `esp32c3`) stays on the CI VM per policy.
 
 ## Safety limits
-- Sandbox `workspace-write` (never `danger-full-access`): writes limited to the
-  Keyboard DM repo; unrelated personal files untouched.
-- No hardware flashing, no production deployment, no system/package changes
-  outside the project without explicit authorization.
-- Preserve the existing 12-key vendor reference app in the repo.
-- Max 2 troubleshooting attempts per failed run; then stop and report.
-- No unattended unlimited iteration loops.
-- Failure means report the error verbatim — never silently swap provider/model.
-
-## Verified smoke test (2026-10-11)
-Command (read-only): `codex exec -s read-only --ephemeral -m gpt-5.6-sol --json
-"Reply in exactly three words: ready to work"` → **RC=0**, full event stream
-(thread.started → turn.started → item.completed → turn.completed), final
-answer: "ready to work". PASS.
+- Sandbox `workspace-write` (never `danger-full-access`); writes limited to the
+  Keyboard DM repo.
+- No hardware flashing, no physical device operations, no production
+  deployment, no system/package changes outside the project without
+  explicit authorization.
+- Preserve the 12-key vendor reference app in the repo.
+- User keyboard profiles, device flash dumps, Bluetooth bonding data and all
+  credentials stay OUT of the repository and never in chat.
+- Keep the 9-key original flash backup private with an independent copy on the
+  CI VM; GitHub source control is not a backup for ignored/private files.
+- Max 2 troubleshooting attempts per failed run, then stop and report; no
+  unattended unlimited iteration.
+- Never swap provider/model silently on failure — report the error verbatim.
 
 ## Hermes orchestration loop
-1. Compose a scoped task prompt (one feature/batch at a time, self-contained —
-   Codex has no chat history).
-2. Run one execution block; read the last message + JSONL.
-3. Inspect changes: `git status`, `git diff`, run the project test suite if
-   changes touched code.
-4. If tests fail: craft a correction prompt from the failure output, re-run
-   (counts toward the 2-attempt limit).
-5. On pass: review diff, `git add`/`commit` with a descriptive message, move on.
-6. Stop after the approved scope; report a concise verified summary (counts,
-   paths, test results) — never dump raw file contents into the chat.
-
-## Archived finding (local-Ollama attempt, 2026-10-10, not pursued further)
-An isolated profile `.codex-home//project_local.config.toml` was created to
-point Codex at the local Ollama (`local-llm:11434`) per the earlier plan.
-Last known issue: with an isolated CODEX_HOME the request still landed on
-api.openai.com (routing pitfall — `base_url` in `[models."tag"]` alone does
-not bind provider routing in 0.161.0). Left in place, unused, for reference.
-Per Daniele's 2026-10-11 decision it is superseded by the ChatGPT-login
-configuration above and no further troubleshooting is scheduled.
+1. Compose a scoped task prompt (one feature/batch, self-contained).
+2. Run one Codex execution block on `rtx`; read the final message.
+3. Inspect changes (`git status`, `git diff`), run the relevant test suite on
+   RTX, and cross-verify on the CI VM for firmware/published code.
+4. On pass: review the diff, commit on the feature branch, **push to GitHub
+   immediately**, update the PR, report the SHA + tests + PR URL.
+5. Stop at the end of the approved scope; report a concise verified summary —
+   never dump raw file contents into the chat.

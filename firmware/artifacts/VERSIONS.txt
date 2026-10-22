@@ -1,0 +1,5 @@
+Keyboard DM firmware artifact versions
+version=f3.0.0
+source_commit=fe17403765c9348e5f053ecd5e89acd010eaa6e7
+build_date=2026-10-22
+esp_idf=v5.1.6

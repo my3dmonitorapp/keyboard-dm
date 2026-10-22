@@ -1,0 +1,14 @@
+{
+  "schema": "keyboard-dm/firmware-manifest/1",
+  "name": "kbdm-esp32c3",
+  "version": "f3.0.0",
+  "chip_family": "esp32c3",
+  "flash_size": "4MB",
+  "flash_mode": "dio",
+  "flash_freq": "80m",
+  "images": [
+    {"file_name": "bootloader.bin", "offset": 0, "sha256": "9d008db00d5052caf3bdb3038e88e39bdecf87a8861425067eb18eb2d5453641", "size_bytes": 20368},
+    {"file_name": "partition-table.bin", "offset": 32768, "sha256": "a11982a2601a607baadac94c0f21fdb7fdbf910249ed5ba58af40be62c2ee98a", "size_bytes": 3072},
+    {"file_name": "kbdm_esp32c3.bin", "offset": 65536, "sha256": "24d1c4e991979b3581e44cec61e41645febe87221aee66dc8f4b2df3017287e8", "size_bytes": 851840}
+  ]
+}

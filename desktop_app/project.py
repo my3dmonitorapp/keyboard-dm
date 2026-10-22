@@ -41,6 +41,10 @@ class KeyboardProject:
             for key_id, key_data in self.profile["keys"].items()
         }
 
+    @property
+    def chip_class(self) -> str:
+        return self.profile["chip_class"]
+
 
 def _project_filename(name: str) -> str:
     safe_name = "".join(
@@ -187,6 +191,7 @@ def create_project(
     assignments: Mapping[str, Any],
     profile_path: str | Path | None = None,
     matrix_config: MatrixConfig | None = None,
+    chip_class: str = "esp32",
 ) -> dict[str, Any]:
     """Create a v3 project document containing a compatible v2 profile."""
     if not isinstance(name, str) or not name.strip():
@@ -207,7 +212,7 @@ def create_project(
             )
     elif layout.label == "matrix":
         raise ProjectError("Matrix projects must include a matrix config")
-    document = create_profile(assignments)
+    document = create_profile(assignments, chip_class=chip_class)
     document.update(
         {
             "type": PROJECT_TYPE,

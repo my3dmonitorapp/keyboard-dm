@@ -2,11 +2,18 @@
 /reference-file-list.txt
 .codex-home/
 .venv/
+dist/
 __pycache__/
 *.pyc
+firmware/artifacts/**/*.bin
+firmware/artifacts/**/*.elf
 profiles/*.bak
 
 # User keyboard projects (local data, not source)
 profiles/
 test.json
 trial
+firmware/artifacts/**/*.bin
+firmware/artifacts/**/*.elf
+build/
+firmware/sdkconfig

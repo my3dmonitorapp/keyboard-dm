@@ -29,7 +29,7 @@ def _require(condition: bool, message: str) -> None:
 def _run_matrix_smoke_flow(project_path: Path) -> None:
     """Exercise matrix conversion, v3 persistence, actions, and simulation."""
     from .action import MediaAction, ModifierAction, ShortcutAction
-    from .device import SimulatedESP32S3Device
+    from .device import SimulatedKeyboardDevice
     from .matrix_model import MatrixConfig
     from .project import PROJECT_VERSION, create_project, load_project, save_project
 
@@ -116,7 +116,7 @@ def _run_matrix_smoke_flow(project_path: Path) -> None:
     _require(reloaded.matrix_config.key_widths == large.key_widths, "widths changed")
     _require(reloaded.matrix_config.key_labels == large.key_labels, "labels changed")
 
-    device = SimulatedESP32S3Device(reloaded.matrix_config.keys())
+    device = SimulatedKeyboardDevice(reloaded.matrix_config.keys())
     device.set_matrix_config(reloaded.matrix_config)
     _require(not device.get_pressed_key_ids(), "matrix device started with a pressed key")
     device.press_matrix_key(4, 10)
@@ -296,9 +296,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     from PySide6.QtWidgets import QApplication
 
     from .app import Keyboard75Window
+    from .fw_protocol_client import InMemoryFirmwareProtocol
 
     application = QApplication(sys.argv)
-    window = Keyboard75Window()
+    # This milestone deliberately exposes configuration upload only through an
+    # injected in-memory transport; it never discovers or opens a serial port.
+    window = Keyboard75Window(
+        firmware_transport=InMemoryFirmwareProtocol(profile="esp32"),
+        firmware_chip_class="esp32",
+    )
     window.show()
     return application.exec()
 

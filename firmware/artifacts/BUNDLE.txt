@@ -1,0 +1,21 @@
+Keyboard DM verified firmware bundle
+Build host: RTX (local system hostname: daniele-MS-7A40)
+ESP-IDF: v5.1.6
+Source commit: fe17403765c9348e5f053ecd5e89acd010eaa6e7
+Build date: 2026-10-22
+Version: f3.0.0
+Verification: compile-only; no physical device I/O; not hardware-tested.
+Checksums below cover every generated payload file; BUNDLE.txt is excluded to avoid a self-referential digest.
+
+5f93882fa9156edc655ebfac1e454a0857d3bef8417c69431b1bb1d4c3940552  VERSIONS.txt
+043a925b8f35280a9ba6c3e83e81554d1408fd655abef70dcc105d2b6d7b034e  esp32/bootloader.bin
+36d2844e9d4c6730aff1b3ac4bff1e354ec2b5fdd12812694d3dfbd3a7716ee4  esp32/kbdm_esp32.bin
+38e8cc745f8c5af0ff8f559211c8636a1fdc925dbcf597537b3efbb373425fd3  esp32/kbdm_esp32.elf
+a11982a2601a607baadac94c0f21fdb7fdbf910249ed5ba58af40be62c2ee98a  esp32/partition-table.bin
+9d008db00d5052caf3bdb3038e88e39bdecf87a8861425067eb18eb2d5453641  esp32c3/bootloader.bin
+24d1c4e991979b3581e44cec61e41645febe87221aee66dc8f4b2df3017287e8  esp32c3/kbdm_esp32c3.bin
+26adf352724b704ae1851c9ec40841a91989a2617b1876b5b6dc354d07242ac8  esp32c3/kbdm_esp32c3.elf
+a11982a2601a607baadac94c0f21fdb7fdbf910249ed5ba58af40be62c2ee98a  esp32c3/partition-table.bin
+3231ccf2ff794281fa728f10240a02b4dd605050fb50b1f584bcbd6446b9980a  make_bundle.sh
+2f111315577e26206beabce5d5395f7d40184ec760233024eacde1fb14e2481f  manifests/kbdm-esp32.json
+7d728436e186d25afc4c6f6c7ba44904965fb4d152f5b5db98ff2feaae5724e5  manifests/kbdm-esp32c3.json

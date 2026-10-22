@@ -9,7 +9,9 @@ from PySide6.QtWidgets import QApplication
 
 from desktop_app.action import SingleKeyAction
 from desktop_app.app import Keyboard75Window
-from desktop_app.device import SimulatedESP32S3Device
+from desktop_app.device import SimulatedKeyboardDevice
+
+SimulatedESP32S3Device = SimulatedKeyboardDevice
 from desktop_app.layouts import L06
 from desktop_app.matrix_model import MatrixConfig
 

@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -44,10 +45,17 @@ from .action import (
     SingleKeyAction,
     parse_shortcut,
 )
-from .device import SimulatedESP32S3Device
-from .esp32_gpio import PinRole, suggest_safe_pins, validate_gpio_pin
+from .device import SimulatedKeyboardDevice
+from .esp32_gpio import PinRole, get_gpio_profile, suggest_safe_pins, validate_gpio_pin
+from .fw_protocol_client import (
+    FirmwareProtocolClient,
+    FirmwareProtocolError,
+    FirmwareTransport,
+    verify_firmware_identity,
+)
 from .layout_model import Key, Layout
 from .layouts import BUILT_IN_LAYOUTS, L75, make_custom_layout
+from .installer_panel import InstallerPanel
 from .matrix_model import (
     DEFAULT_WIDTH_HALF_UNITS,
     MAX_WIDTH_HALF_UNITS,
@@ -69,6 +77,12 @@ from .project import (
     load_project as load_project_file,
     project_path,
     save_project as save_project_file,
+)
+from .serialization import (
+    SerializationError,
+    action_to_firmware,
+    firmware_config_json,
+    stable_json_bytes,
 )
 
 
@@ -454,12 +468,14 @@ class MatrixPinmapDialog(QDialog):
         config: MatrixConfig,
         parent: QWidget | None = None,
         changed: Callable[[], None] | None = None,
+        gpio_profile: str = "esp32",
     ) -> None:
         super().__init__(parent)
         self.setObjectName("matrixPinmapDialog")
         self.setWindowTitle("Matrix GPIO pinmap")
         self.config = config
         self._changed = changed
+        self.gpio_profile = gpio_profile
         self.row_pin_inputs: list[QLineEdit] = []
         self.column_pin_inputs: list[QLineEdit] = []
         self.row_pin_messages: list[QLabel] = []
@@ -468,7 +484,8 @@ class MatrixPinmapDialog(QDialog):
 
         root = QVBoxLayout(self)
         help_label = QLabel(
-            "ESP32-WROOM-32 scan roles: rows are outputs (driven low); columns "
+            f"{get_gpio_profile(gpio_profile).board_label} scan roles: rows are "
+            "outputs (driven low); columns "
             "are inputs with pull-ups. Every matrix line must be assigned.",
             self,
         )
@@ -626,7 +643,7 @@ class MatrixPinmapDialog(QDialog):
             ),
         ):
             for index, (pin, message) in enumerate(zip(pins, messages)):
-                result = validate_gpio_pin(pin, role)
+                result = validate_gpio_pin(pin, role, profile=self.gpio_profile)
                 pin_error = result.error
                 if (
                     pin_error is None
@@ -682,6 +699,7 @@ class MatrixPinmapDialog(QDialog):
             roles,
             min_pin=self.config.min_pin,
             max_pin=self.config.max_pin,
+            profile=self.gpio_profile,
         )
         assignments.extend(
             [None] * (self.config.rows + self.config.cols - len(assignments))
@@ -698,19 +716,24 @@ class Keyboard75Window(QMainWindow):
     def __init__(
         self,
         layout: Layout | None = None,
-        device: SimulatedESP32S3Device | None = None,
+        device: SimulatedKeyboardDevice | None = None,
+        firmware_transport: FirmwareTransport | None = None,
+        firmware_chip_class: str = "esp32",
     ) -> None:
         super().__init__()
         self.layout = Layout.from_dict((layout or L75).to_dict())
         for key in self.layout.keys:
             action = self._action_from_assignment(key.assignment)
             key.assignment = None if action is None else self._typed_payload(action)
-        self.device = device or SimulatedESP32S3Device(
+        get_gpio_profile(firmware_chip_class)
+        self.device = device or SimulatedKeyboardDevice(
             key.key_id for key in self.layout.keys
         )
         if device is not None:
             self.device.set_key_ids(key.key_id for key in self.layout.keys)
         self.device.add_pressed_state_listener(self.refresh_pressed_key_highlights)
+        self._firmware_transport = firmware_transport
+        self._firmware_chip_class = firmware_chip_class
         self.selected_key: Key | None = None
         self.key_widgets: dict[str, QPushButton] = {}
         self.profile: dict[str, object] | None = None
@@ -728,6 +751,7 @@ class Keyboard75Window(QMainWindow):
         self.setStyleSheet(DARK_STYLESHEET)
         self._build_file_menu()
         self._build_layout_menu()
+        self._build_tools_menu()
 
         central_widget = QWidget(self)
         root_layout = QVBoxLayout(central_widget)
@@ -735,21 +759,186 @@ class Keyboard75Window(QMainWindow):
         root_layout.setSpacing(12)
 
         root_layout.addWidget(self._build_top_bar())
+        self.upload_status_label = QLabel(central_widget)
+        self.upload_status_label.setObjectName("configurationUploadStatusLabel")
+        self.upload_status_label.setWordWrap(True)
+        self.upload_status_label.setText(
+            "Configuration upload: ready"
+            if firmware_transport is not None
+            else "Configuration upload: unavailable (no simulated transport injected)"
+        )
+        root_layout.addWidget(self.upload_status_label)
         self.layout_banner = self._build_provisional_banner()
         root_layout.addWidget(self.layout_banner)
 
-        self.content_layout = QHBoxLayout()
+        self.page_stack = QStackedWidget(self)
+        self.page_stack.setObjectName("mainPageStack")
+
+        self.editor_page = QWidget(self.page_stack)
+        self.editor_page.setObjectName("editorPage")
+        self.content_layout = QHBoxLayout(self.editor_page)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
         self.content_layout.setSpacing(16)
         self.key_grid_container = self._build_key_grid()
         self.content_layout.addWidget(self.key_grid_container, stretch=1)
         self.inspector = self._build_inspector()
         self.content_layout.addWidget(self.inspector)
-        root_layout.addLayout(self.content_layout, stretch=1)
+        self.page_stack.addWidget(self.editor_page)
+
+        self.installer_panel = InstallerPanel(self.page_stack)
+        self.page_stack.addWidget(self.installer_panel)
+        root_layout.addWidget(self.page_stack, stretch=1)
 
         self.setCentralWidget(central_widget)
         self._build_status_bar()
         self._refresh_profile_status()
         self._resize_for_layout()
+
+    def _build_tools_menu(self) -> None:
+        tools_menu = self.menuBar().addMenu("&Tools")
+        tools_menu.setObjectName("toolsMenu")
+
+        self.firmware_installer_action = QAction("Firmware Installer...", self)
+        self.firmware_installer_action.setObjectName("firmwareInstallerAction")
+        self.firmware_installer_action.setCheckable(True)
+        self.firmware_installer_action.toggled.connect(self.show_installer_page)
+        tools_menu.addAction(self.firmware_installer_action)
+
+        self.upload_configuration_action = QAction(
+            "Upload configuration to device", self
+        )
+        self.upload_configuration_action.setObjectName("uploadConfigurationAction")
+        self.upload_configuration_action.setEnabled(
+            self._firmware_transport is not None
+        )
+        self.upload_configuration_action.triggered.connect(
+            self.upload_configuration_to_device
+        )
+        tools_menu.addAction(self.upload_configuration_action)
+
+    def show_installer_page(self, visible: bool = True) -> None:
+        """Show the installer page, or return to the editor when unchecked."""
+        self.page_stack.setCurrentWidget(
+            self.installer_panel if visible else self.editor_page
+        )
+
+    def _current_project_document(self) -> dict[str, Any]:
+        """Build the active editor state without changing its saved-project state."""
+        assignments = {key.key_id: key.assignment for key in self.layout.keys}
+        return create_project(
+            self.current_project_name or self.layout.name,
+            self.layout,
+            assignments,
+            self.current_profile_path,
+            self.matrix_config if self.layout.label == "matrix" else None,
+            chip_class=self._firmware_chip_class,
+        )
+
+    def _unsupported_firmware_action_ids(
+        self, document: dict[str, Any]
+    ) -> list[str]:
+        """Return key IDs that cannot be activated by schema-v1 firmware."""
+        unsupported: list[str] = []
+        keys = document.get("keys", {})
+        if not isinstance(keys, dict):
+            return unsupported
+        supported_types = {"key", "modifier", "shortcut", "media"}
+        for key_id, key_data in keys.items():
+            if not isinstance(key_data, dict):
+                unsupported.append(str(key_id))
+                continue
+            try:
+                payload = action_to_firmware(key_data.get("assignment"))
+            except SerializationError:
+                unsupported.append(str(key_id))
+                continue
+            if payload is not None and payload.get("type") not in supported_types:
+                unsupported.append(str(key_id))
+        return sorted(unsupported)
+
+    def _set_upload_phases(self, phases: list[str]) -> None:
+        self.upload_status_label.setText("\n".join(phases))
+        self.statusBar().showMessage(phases[-1], 5000)
+
+    def upload_configuration_to_device(self) -> bool:
+        """Provision through the injected simulator/mock transport and verify it."""
+        phases: list[str] = []
+        transport = self._firmware_transport
+        if transport is None:
+            self._set_upload_phases(
+                ["FAILED: no simulated firmware transport was injected"]
+            )
+            return False
+
+        # Complete the unsupported-action and schema preflight before the first
+        # transport request so an invalid project can never become a partial upload.
+        try:
+            document = self._current_project_document()
+            unsupported_ids = self._unsupported_firmware_action_ids(document)
+            if unsupported_ids:
+                raise SerializationError(
+                    "Unsupported firmware actions on key IDs: "
+                    + ", ".join(unsupported_ids)
+                )
+            firmware_config_json(
+                document, chip_class=self._firmware_chip_class, generation=0
+            )
+        except (ProjectError, SerializationError, TypeError, ValueError) as error:
+            self._set_upload_phases([f"FAILED: preflight rejected: {error}"])
+            return False
+
+        client = FirmwareProtocolClient(transport)
+        try:
+            verify_firmware_identity(client, self._firmware_chip_class)
+            status = client.status()
+            generation = status.get("active_generation")
+            if type(generation) is not int or generation < 0:
+                raise FirmwareProtocolError(
+                    "invalid_response", "active generation is missing"
+                )
+            raw = firmware_config_json(
+                document,
+                chip_class=self._firmware_chip_class,
+                generation=generation + 1,
+            )
+            phases.append(f"Upload sent ({len(raw)} bytes)")
+            self._set_upload_phases(phases)
+            try:
+                committed = client.upload_config(raw)
+            except FirmwareProtocolError as error:
+                phases.append(f"Commit rejected: {error}")
+                raise
+            phases.append(
+                f"Commit accepted (generation {committed.get('generation')})"
+            )
+            self._set_upload_phases(phases)
+
+            if stable_json_bytes(client.get_config()) != raw:
+                raise FirmwareProtocolError(
+                    "readback_mismatch", "active configuration differs from upload"
+                )
+            phases.append("Identical readback verified")
+            self._set_upload_phases(phases)
+
+            if hasattr(transport, "reboot"):
+                reboot_status = client.reboot()
+                if (
+                    reboot_status.get("state") != 2
+                    or reboot_status.get("active_generation")
+                    != committed.get("generation")
+                    or stable_json_bytes(client.get_config()) != raw
+                ):
+                    raise FirmwareProtocolError(
+                        "persistence_mismatch",
+                        "configuration changed after simulated reboot",
+                    )
+                phases.append("Persistence after simulated reboot verified")
+            self._set_upload_phases(phases)
+            return True
+        except Exception as error:
+            phases.append(f"FAILED: {error}")
+            self._set_upload_phases(phases)
+            return False
 
     def _build_file_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -833,6 +1022,7 @@ class Keyboard75Window(QMainWindow):
         layout.setSpacing(6)
 
         heading_row = QHBoxLayout()
+        target_row = QHBoxLayout()
         controls_row = QHBoxLayout()
 
         title = QLabel("Keyboard DM Layout Editor", top_bar)
@@ -842,13 +1032,22 @@ class Keyboard75Window(QMainWindow):
         self.transport_label = QLabel(top_bar)
         self.transport_label.setObjectName("transportLabel")
 
+        self.board_combo = QComboBox(top_bar)
+        self.board_combo.setObjectName("boardSelector")
+        self.board_combo.addItem("classic ESP32-WROOM-32", "esp32")
+        self.board_combo.addItem("ESP32-C3 Super Mini", "esp32c3")
+        self.board_combo.setCurrentIndex(
+            self.board_combo.findData(self._firmware_chip_class)
+        )
+        self.board_combo.currentIndexChanged.connect(self._board_changed)
+
         self.host_connected_checkbox = QCheckBox("USB host connected", top_bar)
         self.host_connected_checkbox.setObjectName("hostConnectedCheckbox")
         self.host_connected_checkbox.toggled.connect(self.set_host_connected)
 
         self.connect_button = QPushButton("Connect", top_bar)
         self.connect_button.setObjectName("connectButton")
-        self.connect_button.clicked.connect(self.connect_device)
+        self.connect_button.clicked.connect(self._show_connect_dialog)
 
         self.disconnect_button = QPushButton("Disconnect", top_bar)
         self.disconnect_button.setObjectName("disconnectButton")
@@ -857,15 +1056,34 @@ class Keyboard75Window(QMainWindow):
         heading_row.addWidget(title)
         heading_row.addStretch()
         heading_row.addWidget(self.host_connected_checkbox)
+        target_row.addWidget(QLabel("Target board", top_bar))
+        target_row.addWidget(self.board_combo)
+        target_row.addStretch()
         controls_row.addWidget(self.device_status_label)
         controls_row.addWidget(self.transport_label)
         controls_row.addStretch()
         controls_row.addWidget(self.connect_button)
         controls_row.addWidget(self.disconnect_button)
         layout.addLayout(heading_row)
+        layout.addLayout(target_row)
         layout.addLayout(controls_row)
         self._refresh_device_status()
         return top_bar
+
+    def _board_changed(self) -> None:
+        """Adopt the visible target board for validation and serialization."""
+        chip_class = self.board_combo.currentData()
+        get_gpio_profile(chip_class)
+        self._firmware_chip_class = chip_class
+        if self._firmware_transport is not None and hasattr(
+            self._firmware_transport, "profile"
+        ):
+            self._firmware_transport.profile = chip_class
+        if self.matrix_pinmap_dialog is not None:
+            self.matrix_pinmap_dialog.gpio_profile = chip_class
+            self.matrix_pinmap_dialog.refresh_validation()
+        self._refresh_device_status()
+        self._set_dirty(True)
 
     def _build_provisional_banner(self) -> QLabel:
         banner = QLabel(self.layout.label, self)
@@ -1085,7 +1303,10 @@ class Keyboard75Window(QMainWindow):
         if self.layout.label != "matrix" or self.matrix_config is None:
             return None
         dialog = MatrixPinmapDialog(
-            self.matrix_config, self, changed=lambda: self._set_dirty(True)
+            self.matrix_config,
+            self,
+            changed=lambda: self._set_dirty(True),
+            gpio_profile=self._firmware_chip_class,
         )
         self.matrix_pinmap_dialog = dialog
         dialog.exec()
@@ -1730,8 +1951,82 @@ class Keyboard75Window(QMainWindow):
         self.device.connect()
         self._refresh_device_status()
 
+    def _show_connect_dialog(self) -> None:
+        """Choose the simulator or explicitly open a discovered serial port."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Connect device")
+        form = QFormLayout(dialog)
+        mode_combo = QComboBox(dialog)
+        mode_combo.addItem("Simulated", "simulated")
+        mode_combo.addItem("USB serial", "serial")
+        port_combo = QComboBox(dialog)
+        kind_combo = QComboBox(dialog)
+        kind_combo.addItem("Classic ESP32 USB-UART", "usb_uart")
+        kind_combo.addItem("ESP32-C3 native USB Serial/JTAG", "c3_native_usart")
+        form.addRow("Connection", mode_combo)
+        form.addRow("Port", port_combo)
+        form.addRow("Transport", kind_combo)
+        try:
+            from .serial_transport import discover_serial_ports
+
+            for entry in discover_serial_ports():
+                label = entry["port"]
+                if entry["description"]:
+                    label += f" — {entry['description']}"
+                port_combo.addItem(label, entry["port"])
+        except RuntimeError as error:
+            port_combo.addItem(str(error), None)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+
+        def update_mode() -> None:
+            enabled = mode_combo.currentData() == "serial"
+            port_combo.setEnabled(enabled)
+            kind_combo.setEnabled(enabled)
+
+        mode_combo.currentIndexChanged.connect(update_mode)
+        update_mode()
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if mode_combo.currentData() == "simulated":
+            self.connect_device()
+            return
+        port = port_combo.currentData()
+        if port is None:
+            QMessageBox.warning(self, "USB serial", "No serial port is available.")
+            return
+        from .serial_transport import SerialTransportError, USBSerialTransport
+
+        transport = USBSerialTransport(port, transport_kind=kind_combo.currentData())
+        try:
+            transport.connect()
+            verify_firmware_identity(
+                FirmwareProtocolClient(transport), self._firmware_chip_class
+            )
+        except (SerialTransportError, FirmwareProtocolError) as error:
+            transport.close()
+            QMessageBox.warning(self, "USB serial", str(error))
+            return
+        self._firmware_transport = transport
+        self.upload_configuration_action.setEnabled(True)
+        self.upload_status_label.setText("Configuration upload: ready")
+        self.statusBar().showMessage(f"Connected to {port}", 5000)
+        self._refresh_device_status()
+
     def disconnect_device(self) -> None:
         """Disconnect the simulated device and refresh the top-bar state."""
+        if self._firmware_transport is not None and hasattr(
+            self._firmware_transport, "disconnect"
+        ):
+            self._firmware_transport.disconnect()
+            self._firmware_transport = None
+            self.upload_configuration_action.setEnabled(False)
         self.device.disconnect()
         self._refresh_device_status()
 
@@ -1741,20 +2036,29 @@ class Keyboard75Window(QMainWindow):
         self._refresh_device_status()
 
     def _refresh_device_status(self) -> None:
-        state = "connected" if self.device.is_connected() else "not connected"
+        serial_connected = bool(
+            self._firmware_transport is not None
+            and getattr(self._firmware_transport, "is_connected", False)
+        )
+        connected = self.device.is_connected() or serial_connected
+        state = "connected" if connected else "not connected"
         layout_summary = f"{self.layout.name} ({self.layout.key_count} keys)"
+        connection = "USB serial" if serial_connected else "simulated"
         self.device_status_label.setText(
-            f"Device: {state} (simulated) — {layout_summary}"
+            f"Device: {state} ({connection}) — {layout_summary}"
         )
         if hasattr(self, "simulated_device_status_label"):
             self.simulated_device_status_label.setText(
                 f"Device: {state} (simulated) — {layout_summary}"
             )
-        self.transport_label.setText(
-            f"Transport: {self.device.get_transport().upper()}"
+        transport_name = (
+            self._firmware_transport.transport_kind
+            if serial_connected
+            else self.device.get_transport()
         )
-        self.connect_button.setEnabled(not self.device.is_connected())
-        self.disconnect_button.setEnabled(self.device.is_connected())
+        self.transport_label.setText(f"Transport: {transport_name.upper()}")
+        self.connect_button.setEnabled(not connected)
+        self.disconnect_button.setEnabled(connected)
 
     def _set_dirty(self, dirty: bool) -> None:
         self.dirty = dirty
@@ -1809,6 +2113,7 @@ class Keyboard75Window(QMainWindow):
             self._refresh_keycap(key)
 
         self.profile = profile
+        self._set_board(profile["chip_class"])
         self.current_profile_path = Path(path)
         if self.selected_key is not None:
             self._load_action_into_editor(
@@ -1821,9 +2126,10 @@ class Keyboard75Window(QMainWindow):
         """Save assignments to local JSON only, never to device hardware."""
         assignments = {key.key_id: key.assignment for key in self.layout.keys}
         if self.profile is None:
-            profile = create_profile(assignments)
+            profile = create_profile(assignments, chip_class=self._firmware_chip_class)
         else:
             profile = dict(self.profile)
+            profile["chip_class"] = self._firmware_chip_class
             profile["keys"] = {
                 key_id: {"assignment": assignment}
                 for key_id, assignment in assignments.items()
@@ -1912,6 +2218,7 @@ class Keyboard75Window(QMainWindow):
             assignments,
             self.current_profile_path,
             self.matrix_config if self.layout.label == "matrix" else None,
+            chip_class=self._firmware_chip_class,
         )
         saved_path = save_project_file(target, document)
         self.profile = document
@@ -1927,6 +2234,7 @@ class Keyboard75Window(QMainWindow):
         if not self.confirm_unsaved_changes():
             return False
         loaded = load_project_file(path, fallback_layout=self.layout)
+        self._set_board(loaded.chip_class)
         self._install_layout(Layout.from_dict(loaded.layout.to_dict()))
         self.matrix_config = (
             MatrixConfig.from_dict(loaded.matrix_config.to_dict())
@@ -1954,6 +2262,20 @@ class Keyboard75Window(QMainWindow):
         self.current_project_path = Path(path)
         self._set_dirty(False)
         return True
+
+    def _set_board(self, chip_class: str) -> None:
+        index = self.board_combo.findData(chip_class)
+        if index < 0:
+            raise ValueError(f"Unsupported board target {chip_class!r}")
+        self.board_combo.blockSignals(True)
+        self.board_combo.setCurrentIndex(index)
+        self.board_combo.blockSignals(False)
+        self._firmware_chip_class = chip_class
+        if self._firmware_transport is not None and hasattr(
+            self._firmware_transport, "profile"
+        ):
+            self._firmware_transport.profile = chip_class
+        self._refresh_device_status()
 
     def _new_project_dialog(self) -> None:
         name, accepted = QInputDialog.getText(self, "New keyboard project", "Name")
@@ -1996,6 +2318,11 @@ class Keyboard75Window(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         """Protect unsaved local profile changes when closing the window."""
         if self.confirm_unsaved_changes():
+            if self._firmware_transport is not None and hasattr(
+                self._firmware_transport, "disconnect"
+            ):
+                self._firmware_transport.disconnect()
+                self._firmware_transport = None
             event.accept()
         else:
             event.ignore()

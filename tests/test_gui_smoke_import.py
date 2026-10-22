@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from desktop_app.app import Keyboard75Window
 from desktop_app.action import ShortcutAction, SingleKeyAction
-from desktop_app.device import SimulatedESP32S3Device
+from desktop_app.device import SimulatedKeyboardDevice
 from desktop_app.layouts import BUILT_IN_LAYOUTS, L06, L12, L75, make_custom_layout
 from desktop_app.profile import save_profile
 from desktop_app.project import create_project, save_project
@@ -265,7 +265,7 @@ def test_layout_switch_preserves_shared_assignments_and_defaults_new_keys(
 
 def test_initial_layout_sets_injected_device_key_set() -> None:
     application = QApplication.instance() or QApplication([])
-    device = SimulatedESP32S3Device()
+    device = SimulatedKeyboardDevice()
     window = Keyboard75Window(layout=L06, device=device)
     window.connect_device()
 

@@ -9,7 +9,7 @@
 static kb_hal_probe_t probe(void)
 {
     kb_hal_probe_t value; memset(&value, 0, sizeof(value));
-    value.pin_count = FAKE_HAL_MAX_PINS; return value;
+    value.board = "host"; value.pin_count = FAKE_HAL_MAX_PINS; return value;
 }
 
 static kb_config_t config_named(const char *name)
@@ -79,8 +79,31 @@ TEST(version_and_key_events)
     setup(&fake, &ops, &boot, &protocol);
     ASSERT_EQ_U32(KB_PROTOCOL_APPLY_OK, process(&protocol, "{\"version\":1,\"id\":\"v\",\"cmd\":\"version\",\"params\":{}}\n", response, sizeof(response)));
     ASSERT_TRUE(strstr(response, "\"protocol\":\"0.1\"") != NULL);
+    ASSERT_TRUE(strstr(response, "\"active_protocol\":1") != NULL);
+    ASSERT_TRUE(strstr(response, "\"board\":\"host\"") != NULL);
     ASSERT_EQ_U32(KB_PROTOCOL_APPLY_OK, process(&protocol, "{\"id\":\"e\",\"cmd\":\"key_event\",\"params\":{\"enabled\":true}}", response, sizeof(response)));
     ASSERT_TRUE(protocol.key_events_enabled);
+}
+
+TEST(version_reports_both_compiled_target_identities)
+{
+    static const char *boards[] = {"esp32", "esp32c3"};
+    size_t index;
+    for (index = 0U; index < sizeof(boards) / sizeof(boards[0]); ++index) {
+        fake_hal_t fake; kb_hal_ops_t ops; kb_boot_t boot;
+        kb_protocol_context_t protocol; kb_hal_probe_t descriptor = probe();
+        char response[512]; char expected[32];
+        descriptor.board = boards[index]; fake_hal_reset(&fake); ops = fake_hal_ops(&fake);
+        ASSERT_EQ_U32(KB_BOOT_OK, kb_boot_start(&boot, &descriptor, &ops));
+        kb_protocol_context_init(&protocol, &boot, NULL);
+        ASSERT_EQ_U32(KB_PROTOCOL_APPLY_OK, process(&protocol,
+            "{\"version\":\"0.1\",\"id\":\"v\",\"cmd\":\"version\",\"params\":{}}",
+            response, sizeof(response)));
+        (void)snprintf(expected, sizeof(expected), "\"board\":\"%s\"", boards[index]);
+        ASSERT_TRUE(strstr(response, expected) != NULL);
+        ASSERT_TRUE(strstr(response, "\"protocol\":\"0.1\"") != NULL);
+        ASSERT_TRUE(strstr(response, "\"active_protocol\":1") != NULL);
+    }
 }
 
 TEST(bad_version_and_unknown_field_are_structured_errors)
@@ -101,6 +124,29 @@ TEST(incremental_reader_rejects_invalid_utf8)
     kb_protocol_reader_init(&reader);
     ASSERT_EQ_U32(KB_PROTOCOL_READ_ERROR, kb_protocol_read_one_cmd(&reader, bytes, sizeof(bytes), &consumed, &request, &error));
     ASSERT_EQ_U32(KB_PROTOCOL_PARSE_BAD_UTF8, error); ASSERT_EQ_U32(sizeof(bytes), consumed);
+}
+
+TEST(incremental_reader_rejects_overlong_frame_and_recovers)
+{
+    static const uint8_t valid[] =
+        "{\"version\":1,\"id\":\"v\",\"cmd\":\"version\",\"params\":{}}\n";
+    kb_protocol_reader_t reader;
+    kb_protocol_request_t request;
+    kb_protocol_parse_error_t error;
+    uint8_t bytes[KB_PROTOCOL_MAX_LINE_BYTES + 2U];
+    size_t consumed;
+    memset(bytes, 'x', sizeof(bytes));
+    bytes[sizeof(bytes) - 1U] = '\n';
+    kb_protocol_reader_init(&reader);
+    ASSERT_EQ_U32(KB_PROTOCOL_READ_ERROR,
+                  kb_protocol_read_one_cmd(&reader, bytes, sizeof(bytes),
+                                           &consumed, &request, &error));
+    ASSERT_EQ_U32(KB_PROTOCOL_PARSE_OVERLONG, error);
+    ASSERT_EQ_U32(sizeof(bytes), consumed);
+    ASSERT_EQ_U32(KB_PROTOCOL_READ_COMMAND,
+                  kb_protocol_read_one_cmd(
+                      &reader, valid, sizeof(valid) - 1U, &consumed, &request,
+                      &error));
 }
 
 TEST(three_chunk_bad_crc_then_good_commit_and_get)
@@ -138,8 +184,10 @@ TEST(factory_reset_erases_config_slots)
 }
 
 static const test_case_t cases[] = {
-    TEST_CASE(version_and_key_events), TEST_CASE(bad_version_and_unknown_field_are_structured_errors),
+    TEST_CASE(version_and_key_events), TEST_CASE(version_reports_both_compiled_target_identities),
+    TEST_CASE(bad_version_and_unknown_field_are_structured_errors),
     TEST_CASE(incremental_reader_rejects_invalid_utf8), TEST_CASE(three_chunk_bad_crc_then_good_commit_and_get),
+    TEST_CASE(incremental_reader_rejects_overlong_frame_and_recovers),
     TEST_CASE(out_of_order_chunk_does_not_mutate_config), TEST_CASE(factory_reset_erases_config_slots)
 };
 TEST_MAIN("protocol", cases)

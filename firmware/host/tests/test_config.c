@@ -2,6 +2,8 @@
 #include "test_harness.h"
 
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static kb_hal_probe_t probe(void)
@@ -225,6 +227,86 @@ TEST(canonical_round_trip)
     ASSERT_EQ_U32(source.crc32, restored.crc32);
 }
 
+TEST(builder_3x3_matches_desktop_golden_exactly)
+{
+    static const uint8_t rows[] = {0U, 1U, 3U};
+    static const uint8_t cols[] = {4U, 5U, 6U};
+    kb_config_builder_t builder;
+    kb_config_t config;
+    kb_config_t parsed;
+    kb_action_t action;
+    char json[2048];
+    char roundtrip[2048];
+    char golden[2048];
+    size_t json_length;
+    size_t roundtrip_length;
+    size_t golden_length;
+    size_t row;
+    size_t col;
+    FILE *file;
+
+    ASSERT_EQ_U32(KB_CONFIG_BUILD_OK,
+                  kb_config_builder_init(&builder, "esp32c3", 3U, 3U));
+    ASSERT_EQ_U32(KB_CONFIG_BUILD_OK,
+                  kb_config_builder_set_pinmap(
+                      &builder, rows, 3U, cols, 3U,
+                      KB_SCAN_DRIVE_ROWS_LOW_READ_COLS_PULLUP,
+                      KB_PULL_UP_INTERNAL));
+    ASSERT_EQ_U32(KB_CONFIG_BUILD_OK,
+                  kb_config_builder_set_electrical(
+                      &builder, 25U, KB_DIODE_SCOPE_BOARD,
+                      KB_DIODE_COL_TO_ROW));
+    ASSERT_EQ_U32(KB_CONFIG_BUILD_OK,
+                  kb_config_builder_set_meta(
+                      &builder, "Golden 3x3", 3U, 2U, 1U,
+                      "2026-10-19T00:00:00+00:00"));
+    for (row = 0U; row < 3U; ++row) {
+        for (col = 0U; col < 3U; ++col) {
+            memset(&action, 0, sizeof(action));
+            if (row == 0U && col == 0U) {
+                action.type = KB_ACTION_KEY;
+                (void)strcpy(action.key_name, "escape");
+                action.usage_id = 0x29U;
+            } else if (row == 1U && col == 1U) {
+                action.type = KB_ACTION_SHORTCUT;
+                (void)strcpy(action.key_name, "s");
+                action.usage_id = 0x16U;
+                action.modifier_count = 2U;
+                action.modifier_bits[0] = 0U;
+                action.modifier_bits[1] = 1U;
+            } else if (row == 2U && col == 2U) {
+                action.type = KB_ACTION_MEDIA;
+                (void)strcpy(action.key_name, "play_pause");
+                action.usage_id = 0x00cdU;
+            }
+            ASSERT_EQ_U32(KB_CONFIG_BUILD_OK,
+                          kb_config_builder_add_switch(
+                              &builder, (uint8_t)row, (uint8_t)col,
+                              KB_DIODE_COL_TO_ROW, &action));
+        }
+    }
+    ASSERT_EQ_U32(KB_CONFIG_BUILD_OK,
+                  kb_config_builder_finish(&builder, 7U, &config));
+    ASSERT_EQ_U32(KB_CONFIG_PARSE_OK,
+                  kb_config_to_json(&config, json, sizeof(json), &json_length));
+    file = fopen("tests/protocol/valid/golden_3x3.json", "rb");
+    ASSERT_TRUE(file != NULL);
+    golden_length = fread(golden, 1U, sizeof(golden), file);
+    ASSERT_EQ_U32(0U, fclose(file));
+    if (golden_length != 0U && golden[golden_length - 1U] == '\n') {
+        --golden_length;
+    }
+    ASSERT_EQ_U32(golden_length, json_length);
+    ASSERT_TRUE(memcmp(golden, json, json_length) == 0);
+    ASSERT_EQ_U32(KB_CONFIG_PARSE_OK,
+                  kb_config_from_json(json, json_length, &parsed));
+    ASSERT_EQ_U32(KB_CONFIG_PARSE_OK,
+                  kb_config_to_json(&parsed, roundtrip, sizeof(roundtrip),
+                                    &roundtrip_length));
+    ASSERT_EQ_U32(json_length, roundtrip_length);
+    ASSERT_TRUE(memcmp(json, roundtrip, json_length) == 0);
+}
+
 static const test_case_t cases[] = {
     TEST_CASE(valid_minimal_config),
     TEST_CASE(bad_protocol_version),
@@ -240,7 +322,8 @@ static const test_case_t cases[] = {
     TEST_CASE(scan_diode_pair_must_match),
     TEST_CASE(debounce_defaults_and_range_are_validated),
     TEST_CASE(canonical_switch_order_is_row_major),
-    TEST_CASE(canonical_round_trip)
+    TEST_CASE(canonical_round_trip),
+    TEST_CASE(builder_3x3_matches_desktop_golden_exactly)
 };
 
 TEST_MAIN("config", cases)

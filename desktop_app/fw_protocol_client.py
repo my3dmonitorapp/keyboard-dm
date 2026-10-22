@@ -145,23 +145,49 @@ class FirmwareProtocolClient:
 def verify_firmware_identity(
     client: FirmwareProtocolClient, selected_chip_class: str
 ) -> None:
-    """Reject incompatible protocols and known active board configurations."""
+    """Verify protocol, compiled board identity, and transport capability."""
+    known_boards = {"esp32", "esp32c3"}
+    if selected_chip_class not in known_boards:
+        raise FirmwareProtocolError(
+            "unknown_board", f"selected target {selected_chip_class!r} is unsupported"
+        )
+    transport_kind = getattr(client.transport, "transport_kind", None)
+    transport_boards = {
+        "usb_uart": "esp32",
+        "c3_native_usart": "esp32c3",
+    }
+    capable_board = transport_boards.get(transport_kind)
+    if transport_kind is not None and capable_board is None:
+        raise FirmwareProtocolError(
+            "unknown_transport", f"transport capability {transport_kind!r} is unsupported"
+        )
+    if capable_board is not None and capable_board != selected_chip_class:
+        raise FirmwareProtocolError(
+            "board_mismatch",
+            f"{transport_kind} is for {capable_board}, selected target is {selected_chip_class}",
+        )
     version = client.version()
     if version.get("protocol") != PROTOCOL_VERSION or version.get("active_protocol") != 1:
         raise FirmwareProtocolError(
             "unsupported_protocol", "firmware protocol 0.1 (active protocol 1) is required"
         )
-    try:
-        config = client.get_config()
-    except FirmwareProtocolError as error:
-        if error.code == "not_found":
-            return
-        raise
-    chip_class = config.get("chip_class")
-    if chip_class is not None and chip_class != selected_chip_class:
+    board = version.get("board")
+    if not isinstance(board, str) or not board:
+        raise FirmwareProtocolError(
+            "identity_unverifiable", "firmware version response has no board identity"
+        )
+    if board not in known_boards:
+        raise FirmwareProtocolError(
+            "unknown_board", f"firmware reported unsupported board {board!r}"
+        )
+    if board != selected_chip_class:
         raise FirmwareProtocolError(
             "board_mismatch",
-            f"active configuration is for {chip_class}, selected target is {selected_chip_class}",
+            f"firmware is {board}, selected target is {selected_chip_class}",
+        )
+    if capable_board is not None and board != capable_board:
+        raise FirmwareProtocolError(
+            "board_mismatch", f"firmware {board} is incompatible with {transport_kind}"
         )
 
 
@@ -257,7 +283,11 @@ class InMemoryFirmwareProtocol:
 
     def _apply(self, command: str, params: dict[str, Any]) -> dict[str, Any]:
         if command == "version" and not params:
-            return {"protocol": PROTOCOL_VERSION, "active_protocol": 1}
+            return {
+                "protocol": PROTOCOL_VERSION,
+                "active_protocol": 1,
+                "board": self.profile,
+            }
         if command in {"config_status", "boot_status"} and not params:
             return {
                 "state": 2 if self.storage.active_config is not None else 0,

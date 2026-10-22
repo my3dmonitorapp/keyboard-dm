@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from types import SimpleNamespace
@@ -22,10 +23,10 @@ from desktop_app.serial_transport import (
 
 
 class FakeFirmwareSerial:
-    def __init__(self, chip_class: str | None = None) -> None:
+    def __init__(self, board: str | None = "esp32") -> None:
         self.is_open = True
         self.timeout = 1.0
-        self.chip_class = chip_class
+        self.board = board
         self.reply = bytearray()
         self.commands: list[str] = []
 
@@ -35,17 +36,9 @@ class FakeFirmwareSerial:
         self.commands.append(command)
         if command == "version":
             result = {"protocol": "0.1", "active_protocol": 1}
+            if self.board is not None:
+                result["board"] = self.board
             response = {"id": request["id"], "ok": True, "result": result}
-        elif command == "config_get" and self.chip_class is None:
-            response = {
-                "id": request["id"], "ok": False,
-                "error": {"code": "not_found", "message": "no active config"},
-            }
-        elif command == "config_get":
-            response = {
-                "id": request["id"], "ok": True,
-                "result": {"config": {"chip_class": self.chip_class}},
-            }
         else:
             response = {"id": request["id"], "ok": True, "result": {}}
         self.reply.extend(json.dumps(response).encode() + b"\n")
@@ -72,7 +65,7 @@ def test_request_round_trip_is_lf_framed() -> None:
     port = FakeFirmwareSerial()
     transport = USBSerialTransport(port)
     result = FirmwareProtocolClient(transport).version()
-    assert result == {"protocol": "0.1", "active_protocol": 1}
+    assert result == {"protocol": "0.1", "active_protocol": 1, "board": "esp32"}
     assert not port.reply
 
 
@@ -93,6 +86,13 @@ def test_factory_is_deferred_until_explicit_connect() -> None:
     transport.disconnect()
     transport.disconnect()
     assert not transport.is_connected
+
+
+def test_context_manager_closes_after_successful_request() -> None:
+    port = FakeFirmwareSerial()
+    with USBSerialTransport(port) as transport:
+        assert FirmwareProtocolClient(transport).version()["board"] == "esp32"
+    assert not port.is_open
 
 
 @pytest.mark.parametrize("bad_reply", [b"not-json\n", b'{"id":"wrong","ok":true,"result":{}}\n'])
@@ -117,9 +117,11 @@ def test_timeout_is_bounded() -> None:
             return b""
 
     started = time.monotonic()
+    port = Silent()
     with pytest.raises(SerialTransportError, match="timed out"):
-        USBSerialTransport(Silent(), timeout=0.03).request(b"{}\n")
+        USBSerialTransport(port, timeout=0.03).request(b"{}\n")
     assert time.monotonic() - started < 1
+    assert not port.is_open
 
 
 @pytest.mark.parametrize("operation", ["write", "read"])
@@ -136,15 +138,18 @@ def test_serial_exception_is_wrapped(operation) -> None:
                 raise serial.SerialException("gone")
             return super().read(size)
 
+    port = Broken()
     with pytest.raises(SerialTransportError, match="serial I/O failed"):
-        USBSerialTransport(Broken()).request(b"{}\n", timeout=0.03)
+        USBSerialTransport(port).request(b"{}\n", timeout=0.03)
+    assert not port.is_open
 
 
-@pytest.mark.parametrize(
-    ("active", "selected"), [("esp32c3", "esp32"), ("esp32", "esp32c3")]
-)
-def test_identity_mismatch_prevents_upload(active, selected) -> None:
-    client = FirmwareProtocolClient(USBSerialTransport(FakeFirmwareSerial(active)))
+@pytest.mark.parametrize(("reported", "selected"), [("esp32c3", "esp32"), ("esp32", "esp32c3")])
+def test_blank_device_identity_mismatch_prevents_upload(reported, selected) -> None:
+    kind = "usb_uart" if selected == "esp32" else "c3_native_usart"
+    client = FirmwareProtocolClient(
+        USBSerialTransport(FakeFirmwareSerial(reported), transport_kind=kind)
+    )
     uploaded = False
     with pytest.raises(FirmwareProtocolError) as caught:
         verify_firmware_identity(client, selected)
@@ -155,16 +160,90 @@ def test_identity_mismatch_prevents_upload(active, selected) -> None:
 
 def test_matching_identity_proceeds_to_upload_command() -> None:
     port = FakeFirmwareSerial("esp32c3")
-    client = FirmwareProtocolClient(USBSerialTransport(port))
+    client = FirmwareProtocolClient(
+        USBSerialTransport(port, transport_kind="c3_native_usart")
+    )
     verify_firmware_identity(client, "esp32c3")
     client.command("config_upload", {})
-    assert port.commands == ["version", "config_get", "config_upload"]
+    assert port.commands == ["version", "config_upload"]
 
 
-def test_no_active_config_uses_protocol_identity_only() -> None:
-    verify_firmware_identity(
-        FirmwareProtocolClient(USBSerialTransport(FakeFirmwareSerial())), "esp32"
+@pytest.mark.parametrize(
+    ("board", "kind"), [("esp32", "usb_uart"), ("esp32c3", "c3_native_usart")]
+)
+def test_blank_device_matching_identity_is_accepted(board, kind) -> None:
+    verify_firmware_identity(FirmwareProtocolClient(
+        USBSerialTransport(FakeFirmwareSerial(board), transport_kind=kind)), board)
+
+
+@pytest.mark.parametrize(
+    ("board", "selected", "kind"),
+    [
+        (None, "esp32", "usb_uart"),
+        (None, "esp32c3", "c3_native_usart"),
+        ("mystery-chip", "esp32", "usb_uart"),
+        ("mystery-chip", "esp32c3", "c3_native_usart"),
+    ],
+)
+def test_blank_device_unknown_or_legacy_identity_is_rejected(board, selected, kind) -> None:
+    client = FirmwareProtocolClient(
+        USBSerialTransport(FakeFirmwareSerial(board), transport_kind=kind)
     )
+    with pytest.raises(FirmwareProtocolError) as caught:
+        verify_firmware_identity(client, selected)
+    assert caught.value.code in {"identity_unverifiable", "unknown_board"}
+
+
+@pytest.mark.parametrize(
+    ("selected", "kind"), [("esp32c3", "usb_uart"), ("esp32", "c3_native_usart")]
+)
+def test_transport_capability_mismatch_is_rejected_before_upload(selected, kind) -> None:
+    port = FakeFirmwareSerial(selected)
+    client = FirmwareProtocolClient(USBSerialTransport(port, transport_kind=kind))
+    with pytest.raises(FirmwareProtocolError) as caught:
+        verify_firmware_identity(client, selected)
+    assert caught.value.code == "board_mismatch"
+    assert "config_upload" not in port.commands
+
+
+def test_realistic_multichunk_upload_has_complete_untruncated_replies() -> None:
+    class UploadSerial(FakeFirmwareSerial):
+        def __init__(self) -> None:
+            super().__init__("esp32")
+            self.upload = bytearray()
+            self.expected_size = 0
+            self.lines: list[bytes] = []
+
+        def write(self, line: bytes) -> int:
+            self.lines.append(line)
+            request = json.loads(line)
+            command, params = request["cmd"], request["params"]
+            self.commands.append(command)
+            if command == "config_upload" and params["phase"] == "start":
+                self.expected_size = params["total_bytes"]
+                result = {"accepted": True, "next_seq": 0}
+            elif command == "config_upload":
+                self.upload.extend(base64.b64decode(params["data"], validate=True))
+                result = {"accepted": True, "next_seq": params["seq"] + 1}
+            elif command == "config_commit":
+                assert len(self.upload) == self.expected_size
+                result = {"generation": 1, "status": "validated"}
+            else:
+                raise AssertionError(command)
+            response = {"id": request["id"], "ok": True, "result": result}
+            # The transport reads until LF, so a long JSON result cannot be
+            # accepted merely because an early read returned some bytes.
+            self.reply.extend(json.dumps(response).encode() + b"\n")
+            return len(line)
+
+    raw = (b'{"payload":"' + (b"keyboard-dm-" * 500) + b'"}')
+    port = UploadSerial()
+    client = FirmwareProtocolClient(USBSerialTransport(port))
+    result = client.upload_config(raw)
+    assert result == {"generation": 1, "status": "validated"}
+    assert bytes(port.upload) == raw
+    assert port.commands.count("config_upload") > 2
+    assert all(line.endswith(b"\n") and len(line) - 1 <= 1536 for line in port.lines)
 
 
 def test_discovery_uses_provider_without_opening_serial(monkeypatch) -> None:

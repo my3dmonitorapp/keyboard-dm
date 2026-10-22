@@ -58,7 +58,14 @@ CRC described above.
 
 Request params: `{}`.
 
-Success result: `{"protocol":"0.1","active_protocol":1}`.
+Success result:
+`{"protocol":"0.1","active_protocol":1,"board":"esp32"}` (or board
+`"esp32c3"`). `board` is a stable, compiled-in identity and is available on a
+blank device before any configuration exists. This is an additive, compatible
+extension: existing consumers still receive `protocol` and `active_protocol`.
+Older v0.1 firmware can omit `board`; clients that must safely provision a
+selected target should treat such a response as unverifiable rather than assume
+an identity.
 
 ### `config_upload` and `config_commit`
 

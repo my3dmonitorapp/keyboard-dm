@@ -2006,7 +2006,11 @@ class Keyboard75Window(QMainWindow):
         transport = USBSerialTransport(port, transport_kind=kind_combo.currentData())
         try:
             transport.connect()
-        except SerialTransportError as error:
+            verify_firmware_identity(
+                FirmwareProtocolClient(transport), self._firmware_chip_class
+            )
+        except (SerialTransportError, FirmwareProtocolError) as error:
+            transport.close()
             QMessageBox.warning(self, "USB serial", str(error))
             return
         self._firmware_transport = transport
@@ -2314,6 +2318,11 @@ class Keyboard75Window(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         """Protect unsaved local profile changes when closing the window."""
         if self.confirm_unsaved_changes():
+            if self._firmware_transport is not None and hasattr(
+                self._firmware_transport, "disconnect"
+            ):
+                self._firmware_transport.disconnect()
+                self._firmware_transport = None
             event.accept()
         else:
             event.ignore()

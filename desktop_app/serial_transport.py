@@ -106,6 +106,7 @@ class USBSerialTransport:
             raise SerialTransportError("serial port is disconnected")
         wait = self.timeout if timeout is None else timeout
         if wait <= 0:
+            self._close_after_failure()
             raise SerialTransportError("serial response timed out")
         deadline = time.monotonic() + wait
         response = bytearray()
@@ -127,10 +128,20 @@ class USBSerialTransport:
                 if chunk == b"\n":
                     return bytes(response)
         except SerialTransportError:
+            self._close_after_failure()
             raise
         except Exception as error:
+            self._close_after_failure()
             raise SerialTransportError(f"serial I/O failed: {error}") from error
+        self._close_after_failure()
         raise SerialTransportError("serial response timed out")
+
+    def _close_after_failure(self) -> None:
+        """Best-effort cleanup without hiding the request failure."""
+        try:
+            self.disconnect()
+        except SerialTransportError:
+            pass
 
     def __enter__(self):
         self.connect()

@@ -434,8 +434,15 @@ kb_protocol_apply_result_t kb_protocol_apply_cmd(
         return KB_PROTOCOL_APPLY_INVALID_ARGUMENT;
     *length = 0U;
     switch (request->command) {
-    case KB_PROTOCOL_COMMAND_VERSION:
-        return response_write(response, capacity, length, "{\"id\":\"%s\",\"ok\":true,\"result\":{\"protocol\":\"0.1\",\"active_protocol\":1}}", request->id) ? KB_PROTOCOL_APPLY_OK : KB_PROTOCOL_APPLY_BUFFER_TOO_SMALL;
+    case KB_PROTOCOL_COMMAND_VERSION: {
+        const char *board = context->boot == NULL ? NULL : context->boot->descriptor.board;
+        if (board == NULL || board[0] == '\0')
+            return error_response(request->id, "hal_error", response, capacity,
+                                  length, KB_PROTOCOL_APPLY_HAL_ERROR);
+        return response_write(response, capacity, length,
+            "{\"id\":\"%s\",\"ok\":true,\"result\":{\"protocol\":\"0.1\",\"active_protocol\":1,\"board\":\"%s\"}}",
+            request->id, board) ? KB_PROTOCOL_APPLY_OK : KB_PROTOCOL_APPLY_BUFFER_TOO_SMALL;
+    }
     case KB_PROTOCOL_COMMAND_CONFIG_UPLOAD:
         if (request->args.upload.phase == KB_PROTOCOL_UPLOAD_START) {
             memset(context->upload_bytes, 0, sizeof(context->upload_bytes));

@@ -107,6 +107,7 @@ typedef struct {
 
 /* Platform/board capability supplied to chip-family-agnostic validation. */
 typedef struct {
+    const char *board;
     uint8_t pin_count;
     uint8_t reserved_pin_count;
     uint8_t reserved_pins[KB_CONFIG_MAX_RESERVED_PINS];

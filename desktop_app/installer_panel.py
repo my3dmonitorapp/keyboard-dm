@@ -129,6 +129,15 @@ class InstallerPanel(QFrame):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
+        self.simulation_notice = QLabel(
+            "SIMULATION ONLY — firmware installation does not read, write, or "
+            "erase a real device. USB serial configuration upload is separate "
+            "and remains available."
+        )
+        self.simulation_notice.setObjectName("installerSimulationNotice")
+        self.simulation_notice.setWordWrap(True)
+        layout.addWidget(self.simulation_notice)
+
         discovery_row = QHBoxLayout()
         discovery_row.addWidget(QLabel("Detected ports"))
         self.refresh_button = QPushButton("Refresh")
@@ -334,4 +343,3 @@ class InstallerPanel(QFrame):
             and self.port_list.currentRow() >= 0
             and self.firmware_combo.count() > 0
         )
-
